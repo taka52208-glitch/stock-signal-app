@@ -1,0 +1,105 @@
+// シグナルタイプ
+export type SignalType = 'buy' | 'sell' | 'hold';
+
+// 銘柄情報
+export interface Stock {
+  id: number;
+  code: string;
+  name: string;
+  currentPrice: number;
+  previousClose: number;
+  changePercent: number;
+  signal: SignalType;
+  rsi: number;
+  updatedAt: string;
+}
+
+// 銘柄詳細
+export interface StockDetail extends Stock {
+  macd: number;
+  macdSignal: number;
+  macdHistogram: number;
+  sma5: number;
+  sma25: number;
+  sma75: number;
+}
+
+// チャートデータ
+export interface ChartData {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  sma5?: number;
+  sma25?: number;
+  sma75?: number;
+}
+
+// 設定
+export interface Settings {
+  rsiBuyThreshold: number;
+  rsiSellThreshold: number;
+  smaShortPeriod: number;
+  smaMidPeriod: number;
+  smaLongPeriod: number;
+}
+
+// APIレスポンス
+export interface ApiResponse<T> {
+  data: T;
+  message?: string;
+}
+
+// 銘柄追加リクエスト
+export interface AddStockRequest {
+  code: string;
+}
+
+// 取引タイプ
+export type TransactionType = 'buy' | 'sell';
+
+// 取引記録
+export interface Transaction {
+  id: number;
+  code: string;
+  name: string;
+  transactionType: TransactionType;
+  quantity: number;
+  price: number;
+  totalAmount: number;
+  transactionDate: string;
+  memo?: string;
+}
+
+// 取引リクエスト
+export interface TransactionRequest {
+  code: string;
+  transactionType: TransactionType;
+  quantity: number;
+  price: number;
+  memo?: string;
+}
+
+// 保有株
+export interface Holding {
+  code: string;
+  name: string;
+  quantity: number;
+  averagePrice: number;
+  currentPrice: number;
+  totalCost: number;
+  currentValue: number;
+  profitLoss: number;
+  profitLossPercent: number;
+}
+
+// ポートフォリオ
+export interface Portfolio {
+  holdings: Holding[];
+  totalCost: number;
+  totalValue: number;
+  totalProfitLoss: number;
+  totalProfitLossPercent: number;
+}
