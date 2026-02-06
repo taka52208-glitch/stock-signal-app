@@ -2,10 +2,10 @@ fastapi==0.115.0
 uvicorn[standard]==0.30.6
 yfinance==0.2.43
 pandas>=2.3.2
-pandas-ta==0.3.14b0
+pandas-ta>=0.4.67b0
 apscheduler==3.10.4
 sqlalchemy==2.0.32
-psycopg2-binary==2.9.9
+psycopg[binary]==3.2.4
 pydantic==2.9.0
 pydantic-settings==2.5.2
 python-dotenv==1.0.1
