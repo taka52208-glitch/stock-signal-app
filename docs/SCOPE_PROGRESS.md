@@ -3,11 +3,11 @@
 ## フェーズ進捗
 
 - [x] Phase 1: 要件定義
-- [ ] Phase 2: Git管理（推奨）
+- [x] Phase 2: Git管理
 - [x] Phase 3: フロントエンド基盤
 - [x] Phase 4: バックエンド基盤
-- [ ] Phase 5: 機能実装
-- [ ] Phase 6: テスト・デプロイ
+- [x] Phase 5: 機能実装
+- [ ] Phase 6: テスト・デプロイ（デプロイ済み、テスト未実装）
 
 ---
 
@@ -18,6 +18,8 @@
 | P-001 | 銘柄一覧（メイン） | `/` | 全員 | [x] | [x] |
 | P-002 | 銘柄詳細 | `/stock/:code` | 全員 | [x] | [x] |
 | P-003 | 設定 | `/settings` | 全員 | [x] | [x] |
+| P-004 | ポートフォリオ | `/portfolio` | 全員 | [x] | [x] |
+| P-005 | 取引履歴 | `/history` | 全員 | [x] | [x] |
 
 ---
 
@@ -28,12 +30,16 @@
 | GET | `/api/health` | ヘルスチェック | [x] | [x] |
 | GET | `/api/stocks` | 監視銘柄一覧取得 | [x] | [x] |
 | POST | `/api/stocks` | 銘柄追加 | [x] | [x] |
-| DELETE | `/api/stocks/:code` | 銘柄削除 | [x] | [x] |
-| GET | `/api/stocks/:code` | 銘柄詳細取得 | [x] | [x] |
-| GET | `/api/stocks/:code/chart` | チャートデータ取得 | [x] | [x] |
+| DELETE | `/api/stocks/{code}` | 銘柄削除 | [x] | [x] |
+| GET | `/api/stocks/{code}` | 銘柄詳細取得 | [x] | [x] |
+| GET | `/api/stocks/{code}/chart` | チャートデータ取得 | [x] | [x] |
 | GET | `/api/settings` | 設定取得 | [x] | [x] |
 | PUT | `/api/settings` | 設定更新 | [x] | [x] |
 | POST | `/api/update` | 手動データ更新トリガー | [x] | [x] |
+| GET | `/api/transactions` | 取引一覧取得 | [x] | [x] |
+| POST | `/api/transactions` | 取引追加 | [x] | [x] |
+| DELETE | `/api/transactions/{id}` | 取引削除 | [x] | [x] |
+| GET | `/api/portfolio` | ポートフォリオ取得 | [x] | [x] |
 
 ---
 
@@ -42,16 +48,53 @@
 ### ドキュメント
 - [x] `docs/requirements.md` - 要件定義書
 - [x] `docs/SCOPE_PROGRESS.md` - 進捗管理表
+- [x] `docs/DEPLOYMENT.md` - デプロイ手順書
 - [x] `CLAUDE.md` - プロジェクト設定
 
 ### フロントエンド
 - [x] `frontend/` - Reactアプリケーション
-- [x] 銘柄一覧ページ
-- [x] 銘柄詳細ページ
-- [x] 設定ページ
+- [x] 銘柄一覧ページ（シグナル表示・銘柄追加/削除）
+- [x] 銘柄詳細ページ（チャート・RSI・MACD・移動平均線）
+- [x] 設定ページ（RSI閾値・移動平均期間）
+- [x] ポートフォリオページ（保有銘柄・損益計算）
+- [x] 取引履歴ページ（売買記録・削除）
+- [x] APIクライアント（`src/api/client.ts`）
+- [x] 型定義（`src/types/index.ts`）
+- [x] 設定モジュール（`src/config/index.ts`）
+- [ ] カスタムフック（`src/hooks/` - 空）
+- [ ] 共通コンポーネント分離（`src/components/` - 空）
 
 ### バックエンド
 - [x] `backend/` - FastAPIアプリケーション
-- [x] データベースマイグレーション
-- [x] 株価取得ジョブ
-- [x] シグナル判定ロジック
+- [x] データベースモデル（Stock, StockPrice, Signal, Setting, Transaction）
+- [x] 株価取得サービス（yfinance + モックモード対応）
+- [x] テクニカル指標計算（RSI, MACD, SMA）
+- [x] シグナル判定ロジック（買い/売り/様子見）
+- [x] 定期更新スケジューラ（09:30 / 12:30 / 15:30）
+- [x] CORS設定
+- [x] グレースフルシャットダウン（SIGTERM対応）
+- [ ] Rate Limit（未実装）
+- [ ] データベースマイグレーション（Alembic未導入、`create_all`で代用）
+
+### デプロイ
+- [x] フロントエンド: Vercel（`vercel.json` + デプロイスクリプト）
+- [x] バックエンド: Render（`render.yaml` + `runtime.txt`）
+- [x] デプロイスクリプト（`scripts/deploy-*.sh`）
+- [ ] CI/CDパイプライン（未構築）
+
+### テスト
+- [ ] フロントエンドテスト（未実装）
+- [ ] バックエンドテスト（未実装）
+
+---
+
+## 未対応項目まとめ
+
+| 項目 | 優先度 | 備考 |
+|------|--------|------|
+| テスト実装（フロント/バック） | 中 | テストフレームワーク未導入 |
+| Rate Limit | 中 | 要件定義では1分60リクエスト |
+| Alembicマイグレーション | 低 | 現状`create_all`で動作中 |
+| CI/CDパイプライン | 低 | 現状は手動デプロイ |
+| カスタムフック分離 | 低 | 現状はページ内にインライン |
+| 共通コンポーネント分離 | 低 | 現状はページ内にMUIコンポーネント直接使用 |
