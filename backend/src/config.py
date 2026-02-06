@@ -6,8 +6,8 @@ load_dotenv('.env.local')
 
 
 class Settings(BaseSettings):
-    database_url: str = os.getenv('DATABASE_URL', 'sqlite:///./stock.db')
-    cors_origins: str = os.getenv('CORS_ORIGINS', 'http://localhost:3847')
+    database_url: str = os.getenv('DATABASE_URL', '') or 'sqlite:///./stock.db'
+    cors_origins: str = os.getenv('CORS_ORIGINS', '') or 'http://localhost:3847'
     mock_mode: bool = os.getenv('MOCK_MODE', 'true').lower() == 'true'
 
     # シグナル判定デフォルト値
