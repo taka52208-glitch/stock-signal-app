@@ -3,9 +3,10 @@ from sqlalchemy.orm import sessionmaker, declarative_base
 from src.config import settings
 
 # psycopg3ドライバーを使用するためURLを変換
-db_url = settings.database_url
+db_url = settings.database_url or 'sqlite:///./stock.db'
 if db_url.startswith('postgresql://'):
     db_url = db_url.replace('postgresql://', 'postgresql+psycopg://', 1)
+print(f"[database] Using: {db_url[:30]}...")
 
 engine = create_engine(
     db_url,
