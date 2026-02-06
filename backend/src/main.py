@@ -31,6 +31,14 @@ async def lifespan(app: FastAPI):
     # 起動時
     Base.metadata.create_all(bind=engine)
 
+    # 依存ライブラリチェック
+    for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:
+        try:
+            mod = __import__(lib)
+            print(f"[startup] {lib} {getattr(mod, '__version__', 'ok')}")
+        except ImportError as e:
+            print(f"[startup] {lib} UNAVAILABLE: {e}")
+
     # スケジューラー設定（平日 9:30, 12:30, 15:30）
     scheduler.add_job(scheduled_update, 'cron', hour=9, minute=30, day_of_week='mon-fri', id='update_0930')
     scheduler.add_job(scheduled_update, 'cron', hour=12, minute=30, day_of_week='mon-fri', id='update_1230')

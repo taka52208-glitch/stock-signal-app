@@ -1,12 +1,22 @@
-import yfinance as yf
 import pandas as pd
-import pandas_ta as ta
 import numpy as np
 from datetime import datetime, timedelta
 from typing import Optional, Literal
 from sqlalchemy.orm import Session
 from src.models.stock import Stock, StockPrice, Signal, Setting
 from src.config import settings as app_settings
+
+
+def _import_yfinance():
+    """yfinanceを遅延インポート（curl_cffi依存のため起動時クラッシュ防止）"""
+    import yfinance as yf
+    return yf
+
+
+def _import_pandas_ta():
+    """pandas_taを遅延インポート"""
+    import pandas_ta as ta
+    return ta
 
 # 銘柄名マスタ（モック用）
 STOCK_NAMES = {
@@ -94,6 +104,7 @@ class StockService:
 
         # 実データ取得
         import time
+        yf = _import_yfinance()
         ticker = yf.Ticker(f"{code}.T")
 
         try:
@@ -124,6 +135,7 @@ class StockService:
 
         # 実データ取得
         import time
+        yf = _import_yfinance()
         try:
             time.sleep(1)
             ticker = yf.Ticker(f"{code}.T")
@@ -143,6 +155,8 @@ class StockService:
         """テクニカル指標を計算"""
         if len(df) < 26:  # MACD計算に最低26日必要
             return df
+
+        ta = _import_pandas_ta()
 
         # RSI
         df['rsi'] = ta.rsi(df['close'], length=14)
@@ -387,6 +401,7 @@ class StockService:
             'volume': p.volume
         } for p in prices])
 
+        ta = _import_pandas_ta()
         if len(df) >= settings['smaShortPeriod']:
             df['sma5'] = ta.sma(df['close'], length=settings['smaShortPeriod'])
         if len(df) >= settings['smaMidPeriod']:
