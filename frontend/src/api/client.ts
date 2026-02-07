@@ -6,6 +6,7 @@ import type {
   TradeEvaluation, Checklist, PriceSuggestions,
   BacktestSummary, BacktestCreateRequest, BacktestDetail, BacktestTrade, BacktestSnapshot,
   BrokerageConfig, BrokerageBalance, BrokeragePosition, OrderCreateRequest, Order,
+  AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog,
 } from '../types';
 
 const BASE_URL = config.apiUrl;
@@ -136,4 +137,18 @@ export const api = {
     fetchApi<void>(`/api/brokerage/orders/${id}`, { method: 'DELETE' }),
   syncBrokerage: () =>
     fetchApi<{ message: string }>('/api/brokerage/sync', { method: 'POST' }),
+
+  // 自動売買
+  getAutoTradeConfig: () => fetchApi<AutoTradeConfig>('/api/auto-trade/config'),
+  updateAutoTradeConfig: (data: Partial<AutoTradeConfig>) =>
+    fetchApi<AutoTradeConfig>('/api/auto-trade/config', { method: 'PUT', body: JSON.stringify(data) }),
+  toggleAutoTrade: (enabled: boolean) =>
+    fetchApi<AutoTradeConfig>('/api/auto-trade/toggle', { method: 'POST', body: JSON.stringify({ enabled }) }),
+  getAutoTradeLog: (limit: number = 50) =>
+    fetchApi<AutoTradeLog[]>(`/api/auto-trade/log?limit=${limit}`),
+  getAutoTradeStocks: () => fetchApi<AutoTradeStockSetting[]>('/api/auto-trade/stocks'),
+  updateAutoTradeStock: (code: string, enabled: boolean) =>
+    fetchApi<AutoTradeStockSetting>(`/api/auto-trade/stocks/${code}`, {
+      method: 'PUT', body: JSON.stringify({ enabled }),
+    }),
 };

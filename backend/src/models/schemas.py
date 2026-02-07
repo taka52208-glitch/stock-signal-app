@@ -348,3 +348,54 @@ class OrderResponse(BaseModel):
     brokerageOrderId: Optional[str] = None
     createdAt: str
     updatedAt: str
+
+
+# 自動売買関連
+class AutoTradeConfigResponse(BaseModel):
+    enabled: bool
+    minSignalStrength: int
+    maxTradesPerDay: int
+    orderType: str
+    dryRun: bool
+
+
+class AutoTradeConfigUpdateRequest(BaseModel):
+    enabled: Optional[bool] = None
+    minSignalStrength: Optional[int] = Field(None, ge=1, le=3)
+    maxTradesPerDay: Optional[int] = Field(None, ge=1, le=20)
+    orderType: Optional[Literal['market', 'limit']] = None
+    dryRun: Optional[bool] = None
+
+
+class AutoTradeToggleRequest(BaseModel):
+    enabled: bool
+
+
+class AutoTradeStockSettingResponse(BaseModel):
+    code: str
+    name: str
+    enabled: bool
+
+
+class AutoTradeStockUpdateRequest(BaseModel):
+    enabled: bool
+
+
+class AutoTradeLogResponse(BaseModel):
+    id: int
+    code: str
+    signalType: str
+    signalStrength: Optional[int] = None
+    activeSignals: list[str]
+    orderType: Optional[str] = None
+    orderPrice: Optional[float] = None
+    quantity: Optional[int] = None
+    riskPassed: Optional[bool] = None
+    riskWarnings: Optional[list] = None
+    executed: bool
+    dryRun: bool
+    resultStatus: str
+    resultMessage: Optional[str] = None
+    transactionId: Optional[int] = None
+    brokerageOrderId: Optional[str] = None
+    createdAt: str

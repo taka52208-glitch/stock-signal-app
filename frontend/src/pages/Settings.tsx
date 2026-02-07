@@ -14,7 +14,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
-import { ArrowBack, ChevronRight, Security, AccountBalanceWallet, Science } from '@mui/icons-material';
+import { ArrowBack, ChevronRight, Security, AccountBalanceWallet, Science, SmartToy } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Settings as SettingsType } from '../types';
@@ -232,6 +232,21 @@ export default function Settings() {
             <Box display="flex" alignItems="center" gap={1}>
               <AccountBalanceWallet color="primary" />
               <Typography variant="body1">証券会社API連携</Typography>
+            </Box>
+            <ChevronRight color="action" />
+          </Box>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ mb: 1 }}>
+        <CardContent
+          sx={{ py: 1.5, '&:last-child': { pb: 1.5 }, cursor: 'pointer' }}
+          onClick={() => navigate('/settings/auto-trade')}
+        >
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Box display="flex" alignItems="center" gap={1}>
+              <SmartToy color="primary" />
+              <Typography variant="body1">自動売買設定</Typography>
             </Box>
             <ChevronRight color="action" />
           </Box>

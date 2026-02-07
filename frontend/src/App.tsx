@@ -18,6 +18,7 @@ import BacktestCreate from './pages/BacktestCreate';
 import BacktestDetail from './pages/BacktestDetail';
 import BrokerageSetup from './pages/BrokerageSetup';
 import BrokerageOrders from './pages/BrokerageOrders';
+import AutoTradeSettings from './pages/AutoTradeSettings';
 import AlertBadge from './components/AlertBadge';
 
 const theme = createTheme({
@@ -108,6 +109,7 @@ function AppContent() {
             <Route path="/settings" element={<Settings />} />
             <Route path="/settings/risk" element={<RiskSettings />} />
             <Route path="/settings/brokerage" element={<BrokerageSetup />} />
+            <Route path="/settings/auto-trade" element={<AutoTradeSettings />} />
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/history" element={<TransactionHistory />} />
             <Route path="/alerts" element={<Alerts />} />

@@ -308,3 +308,38 @@ export interface Order {
   createdAt: string;
   updatedAt: string;
 }
+
+// 自動売買
+export interface AutoTradeConfig {
+  enabled: boolean;
+  minSignalStrength: number;
+  maxTradesPerDay: number;
+  orderType: string;
+  dryRun: boolean;
+}
+
+export interface AutoTradeStockSetting {
+  code: string;
+  name: string;
+  enabled: boolean;
+}
+
+export interface AutoTradeLog {
+  id: number;
+  code: string;
+  signalType: string;
+  signalStrength: number | null;
+  activeSignals: string[];
+  orderType: string | null;
+  orderPrice: number | null;
+  quantity: number | null;
+  riskPassed: boolean | null;
+  riskWarnings: Array<{ level: string; message: string }> | null;
+  executed: boolean;
+  dryRun: boolean;
+  resultStatus: string;
+  resultMessage: string | null;
+  transactionId: number | null;
+  brokerageOrderId: string | null;
+  createdAt: string;
+}

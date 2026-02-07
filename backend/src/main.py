@@ -12,9 +12,11 @@ from src.models.database import Base, engine, SessionLocal
 from src.routers import (
     stocks_router, settings_router, transactions_router,
     alerts_router, risk_router, backtests_router, brokerage_router,
+    auto_trade_router,
 )
 from src.services.stock_service import StockService
 from src.services.alert_service import AlertService
+from src.services.auto_trade_service import AutoTradeService
 
 scheduler = BackgroundScheduler()
 
@@ -31,6 +33,11 @@ def scheduled_update():
         alert_service = AlertService(db)
         alert_service.check_alerts()
         print("Alert check completed")
+
+        # 自動売買処理
+        auto_trade_service = AutoTradeService(db)
+        auto_trade_service.process_auto_trades()
+        print("Auto-trade processing completed")
     except Exception as e:
         print(f"Scheduled update failed: {e}")
     finally:
@@ -107,6 +114,7 @@ app.include_router(alerts_router)
 app.include_router(risk_router)
 app.include_router(backtests_router)
 app.include_router(brokerage_router)
+app.include_router(auto_trade_router)
 
 
 @app.get('/api/health')

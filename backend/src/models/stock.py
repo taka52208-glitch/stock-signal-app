@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, BigInteger, Boolean, Text
+from sqlalchemy import Column, Integer, String, Float, Date, DateTime, BigInteger, Boolean, Text, JSON
 from sqlalchemy.sql import func
 from .database import Base
 
@@ -159,3 +159,41 @@ class BrokerageOrder(Base):
     brokerage_order_id = Column(String(50), nullable=True)
     created_at = Column(DateTime, server_default=func.now())
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
+class AutoTradeConfig(Base):
+    __tablename__ = 'auto_trade_config'
+
+    id = Column(Integer, primary_key=True, index=True)
+    key = Column(String(50), unique=True, nullable=False)
+    value = Column(String(100), nullable=False)
+
+
+class AutoTradeStock(Base):
+    __tablename__ = 'auto_trade_stocks'
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(10), unique=True, nullable=False)
+    enabled = Column(Boolean, default=True)
+
+
+class AutoTradeLog(Base):
+    __tablename__ = 'auto_trade_log'
+
+    id = Column(Integer, primary_key=True, index=True)
+    code = Column(String(10), index=True, nullable=False)
+    signal_type = Column(String(10), nullable=False)
+    signal_strength = Column(Integer, nullable=True)
+    active_signals = Column(String(100), nullable=True)
+    order_type = Column(String(20), nullable=True)
+    order_price = Column(Float, nullable=True)
+    quantity = Column(Integer, nullable=True)
+    risk_passed = Column(Boolean, nullable=True)
+    risk_warnings = Column(JSON, nullable=True)
+    executed = Column(Boolean, default=False)
+    dry_run = Column(Boolean, default=False)
+    result_status = Column(String(20), nullable=False)  # success, failed, skipped, risk_blocked
+    result_message = Column(String(500), nullable=True)
+    transaction_id = Column(Integer, nullable=True)
+    brokerage_order_id = Column(String(50), nullable=True)
+    created_at = Column(DateTime, server_default=func.now())
