@@ -20,6 +20,7 @@ const DEFAULT_SETTINGS: Settings = {
   smaShortPeriod: 5,
   smaMidPeriod: 25,
   smaLongPeriod: 75,
+  investmentBudget: 100000,
 };
 
 export const useStockStore = create<StockStore>((set) => ({
