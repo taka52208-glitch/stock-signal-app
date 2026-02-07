@@ -2,6 +2,10 @@ import { config } from '../config';
 import type {
   Stock, StockDetail, ChartData, Settings, AddStockRequest,
   Transaction, TransactionRequest, Portfolio, Recommendations,
+  Alert, AlertCreateRequest, AlertHistory, RiskRules,
+  TradeEvaluation, Checklist, PriceSuggestions,
+  BacktestSummary, BacktestCreateRequest, BacktestDetail, BacktestTrade, BacktestSnapshot,
+  BrokerageConfig, BrokerageBalance, BrokeragePosition, OrderCreateRequest, Order,
 } from '../types';
 
 const BASE_URL = config.apiUrl;
@@ -82,4 +86,54 @@ export const api = {
 
   // ポートフォリオ取得
   getPortfolio: () => fetchApi<Portfolio>('/api/transactions/portfolio'),
+
+  // アラート
+  getAlerts: () => fetchApi<Alert[]>('/api/alerts'),
+  createAlert: (data: AlertCreateRequest) =>
+    fetchApi<Alert>('/api/alerts', { method: 'POST', body: JSON.stringify(data) }),
+  deleteAlert: (id: number) =>
+    fetchApi<void>(`/api/alerts/${id}`, { method: 'DELETE' }),
+  getAlertHistory: () => fetchApi<AlertHistory[]>('/api/alerts/history'),
+  markAlertsRead: (ids: number[]) =>
+    fetchApi<void>('/api/alerts/mark-read', { method: 'POST', body: JSON.stringify({ ids }) }),
+  getUnreadAlertCount: () => fetchApi<{ count: number }>('/api/alerts/unread-count'),
+
+  // リスク管理
+  getRiskRules: () => fetchApi<RiskRules>('/api/risk/rules'),
+  updateRiskRules: (data: Partial<RiskRules>) =>
+    fetchApi<RiskRules>('/api/risk/rules', { method: 'PUT', body: JSON.stringify(data) }),
+  evaluateTrade: (data: { code: string; tradeType: string; quantity: number; price: number }) =>
+    fetchApi<TradeEvaluation>('/api/risk/evaluate-trade', { method: 'POST', body: JSON.stringify(data) }),
+  getChecklist: (code: string) => fetchApi<Checklist>(`/api/risk/checklist/${code}`),
+  getSuggestedPrices: (code: string) => fetchApi<PriceSuggestions>(`/api/risk/suggest-prices/${code}`),
+
+  // バックテスト
+  getBacktests: () => fetchApi<BacktestSummary[]>('/api/backtests'),
+  createBacktest: (data: BacktestCreateRequest) =>
+    fetchApi<BacktestDetail>('/api/backtests', { method: 'POST', body: JSON.stringify(data) }),
+  getBacktest: (id: number) => fetchApi<BacktestDetail>(`/api/backtests/${id}`),
+  deleteBacktest: (id: number) =>
+    fetchApi<void>(`/api/backtests/${id}`, { method: 'DELETE' }),
+  getBacktestTrades: (id: number) => fetchApi<BacktestTrade[]>(`/api/backtests/${id}/trades`),
+  getBacktestSnapshots: (id: number) => fetchApi<BacktestSnapshot[]>(`/api/backtests/${id}/snapshots`),
+  compareBacktests: (ids: number[]) =>
+    fetchApi<{ backtests: BacktestDetail[] }>('/api/backtests/compare', {
+      method: 'POST', body: JSON.stringify({ ids }),
+    }),
+
+  // 証券API
+  getBrokerageConfig: () => fetchApi<BrokerageConfig>('/api/brokerage/config'),
+  updateBrokerageConfig: (data: Partial<BrokerageConfig>) =>
+    fetchApi<BrokerageConfig>('/api/brokerage/config', { method: 'PUT', body: JSON.stringify(data) }),
+  connectBrokerage: () =>
+    fetchApi<{ connected: boolean; message: string }>('/api/brokerage/connect', { method: 'POST' }),
+  getBrokerageBalance: () => fetchApi<BrokerageBalance>('/api/brokerage/balance'),
+  getBrokeragePositions: () => fetchApi<BrokeragePosition[]>('/api/brokerage/positions'),
+  getOrders: () => fetchApi<Order[]>('/api/brokerage/orders'),
+  createOrder: (data: OrderCreateRequest) =>
+    fetchApi<Order>('/api/brokerage/orders', { method: 'POST', body: JSON.stringify(data) }),
+  cancelOrder: (id: number) =>
+    fetchApi<void>(`/api/brokerage/orders/${id}`, { method: 'DELETE' }),
+  syncBrokerage: () =>
+    fetchApi<{ message: string }>('/api/brokerage/sync', { method: 'POST' }),
 };

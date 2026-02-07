@@ -20,10 +20,12 @@ import { Add } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { TransactionType } from '../types';
+import TradeChecklistDialog from '../components/TradeChecklistDialog';
 
 export default function Portfolio() {
   const queryClient = useQueryClient();
   const [openDialog, setOpenDialog] = useState(false);
+  const [checklistOpen, setChecklistOpen] = useState(false);
   const [formData, setFormData] = useState({
     code: '',
     transactionType: 'buy' as TransactionType,
@@ -49,6 +51,12 @@ export default function Portfolio() {
 
   const handleSubmit = () => {
     if (!formData.code.match(/^\d{4}$/) || !formData.quantity || !formData.price) return;
+    setOpenDialog(false);
+    setChecklistOpen(true);
+  };
+
+  const handleConfirmTrade = () => {
+    setChecklistOpen(false);
     addMutation.mutate({
       code: formData.code,
       transactionType: formData.transactionType,
@@ -234,6 +242,16 @@ export default function Portfolio() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      <TradeChecklistDialog
+        open={checklistOpen}
+        onClose={() => { setChecklistOpen(false); setOpenDialog(true); }}
+        onConfirm={handleConfirmTrade}
+        code={formData.code}
+        tradeType={formData.transactionType}
+        quantity={parseInt(formData.quantity) || 0}
+        price={parseFloat(formData.price) || 0}
+      />
     </Box>
   );
 }

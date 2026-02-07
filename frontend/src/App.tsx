@@ -11,6 +11,14 @@ import StockDetail from './pages/StockDetail';
 import Settings from './pages/Settings';
 import Portfolio from './pages/Portfolio';
 import TransactionHistory from './pages/TransactionHistory';
+import Alerts from './pages/Alerts';
+import RiskSettings from './pages/RiskSettings';
+import BacktestList from './pages/BacktestList';
+import BacktestCreate from './pages/BacktestCreate';
+import BacktestDetail from './pages/BacktestDetail';
+import BrokerageSetup from './pages/BrokerageSetup';
+import BrokerageOrders from './pages/BrokerageOrders';
+import AlertBadge from './components/AlertBadge';
 
 const theme = createTheme({
   palette: {
@@ -30,17 +38,20 @@ const queryClient = new QueryClient({
   },
 });
 
+const NAV_PATHS = ['/', '/portfolio', '/alerts', '/history'];
+
 function AppHeader() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const showHeader = ['/', '/signals', '/portfolio', '/history'].includes(location.pathname);
+  const showHeader = NAV_PATHS.includes(location.pathname);
   if (!showHeader) return null;
 
   const titles: Record<string, string> = {
     '/': 'おすすめ銘柄',
     '/signals': '全銘柄シグナル',
     '/portfolio': 'ポートフォリオ',
+    '/alerts': 'アラート',
     '/history': '取引履歴',
   };
 
@@ -62,11 +73,11 @@ function BottomNav() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  const showNav = ['/', '/signals', '/portfolio', '/history'].includes(location.pathname);
+  const showNav = NAV_PATHS.includes(location.pathname);
   if (!showNav) return null;
 
-  const pathToValue: Record<string, number> = { '/': 0, '/portfolio': 1, '/history': 2 };
-  const valueToPath = ['/', '/portfolio', '/history'];
+  const pathToValue: Record<string, number> = { '/': 0, '/portfolio': 1, '/alerts': 2, '/history': 3 };
+  const valueToPath = ['/', '/portfolio', '/alerts', '/history'];
 
   return (
     <Paper sx={{ position: 'fixed', bottom: 0, left: 0, right: 0 }} elevation={3}>
@@ -77,6 +88,7 @@ function BottomNav() {
       >
         <BottomNavigationAction label="おすすめ" icon={<Recommend />} />
         <BottomNavigationAction label="保有株" icon={<AccountBalance />} />
+        <BottomNavigationAction label="アラート" icon={<AlertBadge />} />
         <BottomNavigationAction label="履歴" icon={<History />} />
       </BottomNavigation>
     </Paper>
@@ -94,8 +106,15 @@ function AppContent() {
             <Route path="/signals" element={<StockList />} />
             <Route path="/stock/:code" element={<StockDetail />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/settings/risk" element={<RiskSettings />} />
+            <Route path="/settings/brokerage" element={<BrokerageSetup />} />
             <Route path="/portfolio" element={<Portfolio />} />
             <Route path="/history" element={<TransactionHistory />} />
+            <Route path="/alerts" element={<Alerts />} />
+            <Route path="/backtests" element={<BacktestList />} />
+            <Route path="/backtests/new" element={<BacktestCreate />} />
+            <Route path="/backtests/:id" element={<BacktestDetail />} />
+            <Route path="/orders" element={<BrokerageOrders />} />
           </Routes>
         </Box>
       </Container>

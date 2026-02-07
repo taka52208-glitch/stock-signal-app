@@ -11,13 +11,21 @@ import {
   ToggleButtonGroup,
   CircularProgress,
   Alert,
+  Button,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  TextField,
+  ToggleButtonGroup as TBGroup,
 } from '@mui/material';
-import { ArrowBack, TrendingUp, TrendingDown, TrendingFlat } from '@mui/icons-material';
-import { useQuery } from '@tanstack/react-query';
+import { ArrowBack, TrendingUp, TrendingDown, TrendingFlat, NotificationsActive } from '@mui/icons-material';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { api } from '../api/client';
-import type { SignalType } from '../types';
+import type { SignalType, AlertType } from '../types';
 import SignalStrengthDisplay from '../components/SignalStrengthDisplay';
+import PriceSuggestionCard from '../components/PriceSuggestionCard';
 
 const getSignalColor = (signal: SignalType) => {
   switch (signal) {
@@ -55,7 +63,22 @@ const getSignalLabel = (signal: SignalType) => {
 export default function StockDetail() {
   const { code } = useParams<{ code: string }>();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [period, setPeriod] = useState('3m');
+  const [alertDialogOpen, setAlertDialogOpen] = useState(false);
+  const [alertForm, setAlertForm] = useState({
+    alertType: 'price_above' as AlertType,
+    conditionValue: '',
+  });
+
+  const createAlertMutation = useMutation({
+    mutationFn: api.createAlert,
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['alerts'] });
+      setAlertDialogOpen(false);
+      setAlertForm({ alertType: 'price_above', conditionValue: '' });
+    },
+  });
 
   const { data: stock, isLoading: stockLoading, error: stockError } = useQuery({
     queryKey: ['stock', code],
@@ -87,18 +110,23 @@ export default function StockDetail() {
 
   return (
     <Box p={2}>
-      <Box display="flex" alignItems="center" mb={2}>
-        <IconButton onClick={() => navigate(-1)}>
-          <ArrowBack />
-        </IconButton>
-        <Box ml={1}>
-          <Typography variant="subtitle2" color="text.secondary">
-            {stock.code}
-          </Typography>
-          <Typography variant="h6" fontWeight="bold">
-            {stock.name}
-          </Typography>
+      <Box display="flex" alignItems="center" justifyContent="space-between" mb={2}>
+        <Box display="flex" alignItems="center">
+          <IconButton onClick={() => navigate(-1)}>
+            <ArrowBack />
+          </IconButton>
+          <Box ml={1}>
+            <Typography variant="subtitle2" color="text.secondary">
+              {stock.code}
+            </Typography>
+            <Typography variant="h6" fontWeight="bold">
+              {stock.name}
+            </Typography>
+          </Box>
         </Box>
+        <IconButton onClick={() => setAlertDialogOpen(true)} color="primary">
+          <NotificationsActive />
+        </IconButton>
       </Box>
 
       <Card sx={{ mb: 2 }}>
@@ -179,6 +207,8 @@ export default function StockDetail() {
           </CardContent>
         </Card>
       )}
+
+      <PriceSuggestionCard code={code!} />
 
       <Card sx={{ mb: 2 }}>
         <CardContent>
@@ -277,6 +307,54 @@ export default function StockDetail() {
           </Box>
         </CardContent>
       </Card>
+
+      <Dialog open={alertDialogOpen} onClose={() => setAlertDialogOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>{stock.name} のアラート設定</DialogTitle>
+        <DialogContent>
+          <ToggleButtonGroup
+            value={alertForm.alertType}
+            exclusive
+            onChange={(_, v) => v && setAlertForm({ ...alertForm, alertType: v })}
+            fullWidth
+            sx={{ my: 2 }}
+            size="small"
+          >
+            <ToggleButton value="price_above">価格以上</ToggleButton>
+            <ToggleButton value="price_below">価格以下</ToggleButton>
+            <ToggleButton value="signal_change">シグナル変化</ToggleButton>
+          </ToggleButtonGroup>
+          {alertForm.alertType !== 'signal_change' && (
+            <TextField
+              label="条件価格（円）"
+              type="number"
+              fullWidth
+              margin="dense"
+              value={alertForm.conditionValue}
+              onChange={(e) => setAlertForm({ ...alertForm, conditionValue: e.target.value })}
+            />
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setAlertDialogOpen(false)}>キャンセル</Button>
+          <Button
+            variant="contained"
+            onClick={() => {
+              createAlertMutation.mutate({
+                code: code!,
+                alertType: alertForm.alertType,
+                conditionValue: alertForm.alertType !== 'signal_change'
+                  ? parseFloat(alertForm.conditionValue) : undefined,
+              });
+            }}
+            disabled={
+              (alertForm.alertType !== 'signal_change' && !alertForm.conditionValue) ||
+              createAlertMutation.isPending
+            }
+          >
+            設定
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   );
 }

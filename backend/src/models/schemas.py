@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import Optional, Literal
+from typing import Optional, Literal, Any
 from datetime import date, datetime
 
 
@@ -136,3 +136,215 @@ class PortfolioResponse(BaseModel):
     totalValue: float
     totalProfitLoss: float
     totalProfitLossPercent: float
+
+
+# アラート関連
+class AlertCreateRequest(BaseModel):
+    code: str = Field(..., pattern=r'^\d{4}$')
+    alertType: Literal['price_above', 'price_below', 'signal_change']
+    conditionValue: Optional[float] = None
+
+
+class AlertResponse(BaseModel):
+    id: int
+    code: str
+    name: str
+    alertType: str
+    conditionValue: Optional[float] = None
+    isActive: bool
+    createdAt: str
+
+
+class AlertHistoryResponse(BaseModel):
+    id: int
+    alertId: int
+    code: str
+    name: str
+    message: str
+    alertType: str
+    signalBefore: Optional[str] = None
+    signalAfter: Optional[str] = None
+    priceAtTrigger: Optional[float] = None
+    isRead: bool
+    triggeredAt: str
+
+
+class MarkReadRequest(BaseModel):
+    ids: list[int]
+
+
+class UnreadCountResponse(BaseModel):
+    count: int
+
+
+# リスク管理関連
+class RiskRulesResponse(BaseModel):
+    maxPositionPercent: float
+    maxLossPerTrade: float
+    maxPortfolioLoss: float
+    maxOpenPositions: int
+
+
+class RiskRulesUpdateRequest(BaseModel):
+    maxPositionPercent: Optional[float] = Field(None, ge=1, le=100)
+    maxLossPerTrade: Optional[float] = Field(None, ge=1, le=50)
+    maxPortfolioLoss: Optional[float] = Field(None, ge=1, le=100)
+    maxOpenPositions: Optional[int] = Field(None, ge=1, le=50)
+
+
+class RiskWarning(BaseModel):
+    level: Literal['error', 'warning', 'info']
+    message: str
+
+
+class TradeEvaluationRequest(BaseModel):
+    code: str = Field(..., pattern=r'^\d{4}$')
+    tradeType: Literal['buy', 'sell']
+    quantity: int = Field(..., gt=0)
+    price: float = Field(..., gt=0)
+
+
+class TradeEvaluationResponse(BaseModel):
+    passed: bool
+    warnings: list[RiskWarning]
+    tradeAmount: float
+    currentPortfolioValue: float
+    activePositions: int
+
+
+class ChecklistItem(BaseModel):
+    label: str
+    status: Literal['ok', 'warning', 'neutral']
+    detail: str
+
+
+class ChecklistResponse(BaseModel):
+    code: str
+    name: str
+    items: list[ChecklistItem]
+
+
+class PriceSuggestion(BaseModel):
+    type: str
+    label: str
+    price: float
+    reason: str
+
+
+class PriceSuggestionsResponse(BaseModel):
+    code: str
+    name: str
+    currentPrice: float
+    suggestions: list[PriceSuggestion]
+
+
+# バックテスト関連
+class BacktestCreateRequest(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    startDate: str  # YYYY-MM-DD
+    endDate: str
+    initialCapital: float = Field(..., gt=0)
+    codes: list[str]
+    strategyParams: Optional[dict] = None
+
+
+class BacktestSummary(BaseModel):
+    id: int
+    name: str
+    startDate: str
+    endDate: str
+    initialCapital: float
+    status: str
+    totalReturn: Optional[float] = None
+    totalReturnPercent: Optional[float] = None
+    createdAt: str
+
+
+class BacktestTradeResponse(BaseModel):
+    id: int
+    code: str
+    tradeType: str
+    quantity: int
+    price: float
+    tradeDate: str
+    pnl: Optional[float] = None
+
+
+class BacktestSnapshotResponse(BaseModel):
+    date: str
+    portfolioValue: float
+    cash: float
+
+
+class BacktestDetailResponse(BaseModel):
+    id: int
+    name: str
+    startDate: str
+    endDate: str
+    initialCapital: float
+    status: str
+    strategyParams: Optional[dict] = None
+    resultSummary: Optional[dict] = None
+    createdAt: str
+
+
+class BacktestCompareRequest(BaseModel):
+    ids: list[int] = Field(..., min_length=2, max_length=5)
+
+
+class BacktestCompareResponse(BaseModel):
+    backtests: list[BacktestDetailResponse]
+
+
+# 証券API関連
+class BrokerageConfigResponse(BaseModel):
+    host: str
+    port: int
+    apiPassword: str
+
+
+class BrokerageConfigUpdateRequest(BaseModel):
+    host: Optional[str] = None
+    port: Optional[int] = None
+    apiPassword: Optional[str] = None
+
+
+class BrokerageConnectResponse(BaseModel):
+    connected: bool
+    message: str
+
+
+class BrokerageBalanceResponse(BaseModel):
+    cashBalance: float
+    marginBalance: float
+    totalValue: float
+
+
+class BrokeragePositionResponse(BaseModel):
+    code: str
+    name: str
+    quantity: int
+    averagePrice: float
+    currentPrice: float
+    profitLoss: float
+
+
+class OrderCreateRequest(BaseModel):
+    code: str = Field(..., pattern=r'^\d{4}$')
+    orderType: Literal['market', 'limit', 'stop']
+    side: Literal['buy', 'sell']
+    quantity: int = Field(..., gt=0)
+    price: Optional[float] = None
+
+
+class OrderResponse(BaseModel):
+    id: int
+    code: str
+    orderType: str
+    side: str
+    quantity: int
+    price: Optional[float] = None
+    status: str
+    brokerageOrderId: Optional[str] = None
+    createdAt: str
+    updatedAt: str

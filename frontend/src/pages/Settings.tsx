@@ -14,7 +14,7 @@ import {
   ToggleButton,
   ToggleButtonGroup,
 } from '@mui/material';
-import { ArrowBack } from '@mui/icons-material';
+import { ArrowBack, ChevronRight, Security, AccountBalanceWallet, Science } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Settings as SettingsType } from '../types';
@@ -179,7 +179,7 @@ export default function Settings() {
         </CardContent>
       </Card>
 
-      <Box display="flex" gap={2}>
+      <Box display="flex" gap={2} mb={2}>
         <Button variant="outlined" fullWidth onClick={handleReset}>
           デフォルトに戻す
         </Button>
@@ -192,6 +192,51 @@ export default function Settings() {
           保存
         </Button>
       </Box>
+
+      <Card sx={{ mb: 1 }}>
+        <CardContent
+          sx={{ py: 1.5, '&:last-child': { pb: 1.5 }, cursor: 'pointer' }}
+          onClick={() => navigate('/settings/risk')}
+        >
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Box display="flex" alignItems="center" gap={1}>
+              <Security color="primary" />
+              <Typography variant="body1">リスク管理設定</Typography>
+            </Box>
+            <ChevronRight color="action" />
+          </Box>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ mb: 1 }}>
+        <CardContent
+          sx={{ py: 1.5, '&:last-child': { pb: 1.5 }, cursor: 'pointer' }}
+          onClick={() => navigate('/backtests')}
+        >
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Box display="flex" alignItems="center" gap={1}>
+              <Science color="primary" />
+              <Typography variant="body1">バックテスト</Typography>
+            </Box>
+            <ChevronRight color="action" />
+          </Box>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ mb: 1 }}>
+        <CardContent
+          sx={{ py: 1.5, '&:last-child': { pb: 1.5 }, cursor: 'pointer' }}
+          onClick={() => navigate('/settings/brokerage')}
+        >
+          <Box display="flex" alignItems="center" justifyContent="space-between">
+            <Box display="flex" alignItems="center" gap={1}>
+              <AccountBalanceWallet color="primary" />
+              <Typography variant="body1">証券会社API連携</Typography>
+            </Box>
+            <ChevronRight color="action" />
+          </Box>
+        </CardContent>
+      </Card>
 
       <Snackbar
         open={snackbarOpen}

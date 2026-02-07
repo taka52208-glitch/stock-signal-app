@@ -9,8 +9,12 @@ from sqlalchemy import text
 
 from src.config import settings
 from src.models.database import Base, engine, SessionLocal
-from src.routers import stocks_router, settings_router, transactions_router
+from src.routers import (
+    stocks_router, settings_router, transactions_router,
+    alerts_router, risk_router, backtests_router, brokerage_router,
+)
 from src.services.stock_service import StockService
+from src.services.alert_service import AlertService
 
 scheduler = BackgroundScheduler()
 
@@ -22,6 +26,11 @@ def scheduled_update():
         service = StockService(db)
         service.update_all_stocks()
         print("Stock data updated successfully")
+
+        # アラートチェック
+        alert_service = AlertService(db)
+        alert_service.check_alerts()
+        print("Alert check completed")
     except Exception as e:
         print(f"Scheduled update failed: {e}")
     finally:
@@ -94,6 +103,10 @@ app.add_middleware(
 app.include_router(stocks_router)
 app.include_router(settings_router)
 app.include_router(transactions_router)
+app.include_router(alerts_router)
+app.include_router(risk_router)
+app.include_router(backtests_router)
+app.include_router(brokerage_router)
 
 
 @app.get('/api/health')
