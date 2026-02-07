@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     sma_mid_period: int = 25
     sma_long_period: int = 75
 
+    # 投資予算デフォルト値
+    investment_budget: int = 100000
+
     class Config:
         env_file = '.env.local'
 

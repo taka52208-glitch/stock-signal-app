@@ -1,5 +1,8 @@
 import { config } from '../config';
-import type { Stock, StockDetail, ChartData, Settings, AddStockRequest, Transaction, TransactionRequest, Portfolio } from '../types';
+import type {
+  Stock, StockDetail, ChartData, Settings, AddStockRequest,
+  Transaction, TransactionRequest, Portfolio, Recommendations,
+} from '../types';
 
 const BASE_URL = config.apiUrl;
 
@@ -19,6 +22,9 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
 }
 
 export const api = {
+  // おすすめ銘柄取得
+  getRecommendations: () => fetchApi<Recommendations>('/api/recommendations'),
+
   // 銘柄一覧取得
   getStocks: () => fetchApi<Stock[]>('/api/stocks'),
 

@@ -21,6 +21,7 @@ import { Add, Delete, Refresh, TrendingUp, TrendingDown, TrendingFlat } from '@m
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
 import type { Stock, SignalType } from '../types';
+import SignalStrengthDisplay from '../components/SignalStrengthDisplay';
 
 const getSignalColor = (signal: SignalType) => {
   switch (signal) {
@@ -155,12 +156,19 @@ export default function StockList() {
                 </Typography>
               </Box>
               <Box display="flex" alignItems="center" gap={1}>
-                <Chip
-                  icon={getSignalIcon(stock.signal)}
-                  label={getSignalLabel(stock.signal)}
-                  color={getSignalColor(stock.signal)}
-                  size="small"
-                />
+                <Box textAlign="center">
+                  <Chip
+                    icon={getSignalIcon(stock.signal)}
+                    label={getSignalLabel(stock.signal)}
+                    color={getSignalColor(stock.signal)}
+                    size="small"
+                  />
+                  {stock.signalStrength > 0 && (
+                    <Box mt={0.25}>
+                      <SignalStrengthDisplay strength={stock.signalStrength} showLabel={false} />
+                    </Box>
+                  )}
+                </Box>
                 <IconButton
                   size="small"
                   onClick={(e) => handleDeleteStock(e, stock.code)}
@@ -176,7 +184,7 @@ export default function StockList() {
 
       <Fab
         color="primary"
-        sx={{ position: 'fixed', bottom: 16, right: 16 }}
+        sx={{ position: 'fixed', bottom: 72, right: 16 }}
         onClick={() => setOpenDialog(true)}
       >
         <Add />

@@ -77,6 +77,7 @@ class StockService:
             'smaShortPeriod': app_settings.sma_short_period,
             'smaMidPeriod': app_settings.sma_mid_period,
             'smaLongPeriod': app_settings.sma_long_period,
+            'investmentBudget': app_settings.investment_budget,
         }
         db_settings = self.db.query(Setting).all()
         for s in db_settings:
@@ -175,13 +176,18 @@ class StockService:
 
         return df
 
-    def determine_signal(self, df: pd.DataFrame, settings: dict) -> Literal['buy', 'sell', 'hold']:
-        """シグナルを判定"""
+    def calculate_signal_details(self, df: pd.DataFrame, settings: dict) -> dict:
+        """シグナル詳細を計算"""
         if len(df) < 2:
-            return 'hold'
+            return {
+                'signal_type': 'hold', 'signal_strength': 0, 'active_signals': [],
+                'target_price': None, 'stop_loss_price': None,
+                'support_price': None, 'resistance_price': None,
+            }
 
         latest = df.iloc[-1]
         prev = df.iloc[-2]
+        current_price = latest['close']
 
         rsi = latest.get('rsi')
         macd = latest.get('macd')
@@ -215,11 +221,47 @@ class StockService:
                 if prev_sma_short >= prev_sma_mid and sma_short < sma_mid:
                     sell_signals.append('DeadCross')
 
+        # 支持線・抵抗線（直近25日の安値・高値）
+        recent = df.tail(25)
+        support_price = float(recent['low'].min())
+        resistance_price = float(recent['high'].max())
+
         if buy_signals:
-            return 'buy'
-        if sell_signals:
-            return 'sell'
-        return 'hold'
+            signal_type = 'buy'
+            active = buy_signals
+            sma75 = latest.get('sma75')
+            # 目標価格: 抵抗線、SMA75、現在値+10%のうち最も高いもの
+            candidates = [resistance_price]
+            if sma75 is not None and not pd.isna(sma75) and sma75 > current_price:
+                candidates.append(float(sma75))
+            candidates.append(current_price * 1.10)
+            target_price = max(candidates)
+            stop_loss_price = max(support_price, current_price * 0.95)
+        elif sell_signals:
+            signal_type = 'sell'
+            active = sell_signals
+            target_price = support_price
+            stop_loss_price = resistance_price
+        else:
+            signal_type = 'hold'
+            active = []
+            target_price = None
+            stop_loss_price = None
+
+        return {
+            'signal_type': signal_type,
+            'signal_strength': len(active),
+            'active_signals': active,
+            'target_price': round(target_price, 1) if target_price else None,
+            'stop_loss_price': round(stop_loss_price, 1) if stop_loss_price else None,
+            'support_price': round(support_price, 1),
+            'resistance_price': round(resistance_price, 1),
+        }
+
+    def determine_signal(self, df: pd.DataFrame, settings: dict) -> Literal['buy', 'sell', 'hold']:
+        """シグナルを判定（後方互換ラッパー）"""
+        details = self.calculate_signal_details(df, settings)
+        return details['signal_type']
 
     def add_stock(self, code: str) -> Optional[Stock]:
         """銘柄を追加"""
@@ -281,19 +323,25 @@ class StockService:
             self.db.add(price)
 
         # シグナル保存
-        signal_type = self.determine_signal(df, settings)
+        details = self.calculate_signal_details(df, settings)
         self.db.query(Signal).filter(Signal.code == code, Signal.date == today).delete()
         signal = Signal(
             code=code,
             date=today,
-            signal_type=signal_type,
+            signal_type=details['signal_type'],
             rsi=latest.get('rsi'),
             macd=latest.get('macd'),
             macd_signal=latest.get('macd_signal'),
             macd_histogram=latest.get('macd_histogram'),
             sma5=latest.get('sma5'),
             sma25=latest.get('sma25'),
-            sma75=latest.get('sma75')
+            sma75=latest.get('sma75'),
+            signal_strength=details['signal_strength'],
+            active_signals=','.join(details['active_signals']) if details['active_signals'] else None,
+            target_price=details['target_price'],
+            stop_loss_price=details['stop_loss_price'],
+            support_price=details['support_price'],
+            resistance_price=details['resistance_price'],
         )
         self.db.add(signal)
         self.db.commit()
@@ -320,6 +368,9 @@ class StockService:
                 prev_close = prev_price.close if prev_price else current
                 change = ((current - prev_close) / prev_close * 100) if prev_close else 0
 
+                active_signals_list = (
+                    latest_signal.active_signals.split(',') if latest_signal and latest_signal.active_signals else []
+                )
                 result.append({
                     'id': stock.id,
                     'code': stock.code,
@@ -329,6 +380,8 @@ class StockService:
                     'changePercent': round(change, 2),
                     'signal': latest_signal.signal_type if latest_signal else 'hold',
                     'rsi': round(latest_signal.rsi, 1) if latest_signal and latest_signal.rsi else 50.0,
+                    'signalStrength': latest_signal.signal_strength if latest_signal and latest_signal.signal_strength else 0,
+                    'activeSignals': active_signals_list,
                     'updatedAt': latest_price.date.isoformat() if latest_price else ''
                 })
         return result
@@ -358,6 +411,9 @@ class StockService:
         prev_close = prev_price.close if prev_price else current
         change = ((current - prev_close) / prev_close * 100) if prev_close else 0
 
+        active_signals_list = (
+            latest_signal.active_signals.split(',') if latest_signal and latest_signal.active_signals else []
+        )
         return {
             'id': stock.id,
             'code': stock.code,
@@ -367,12 +423,18 @@ class StockService:
             'changePercent': round(change, 2),
             'signal': latest_signal.signal_type if latest_signal else 'hold',
             'rsi': round(latest_signal.rsi, 1) if latest_signal and latest_signal.rsi else 50.0,
+            'signalStrength': latest_signal.signal_strength if latest_signal and latest_signal.signal_strength else 0,
+            'activeSignals': active_signals_list,
             'macd': round(latest_signal.macd, 2) if latest_signal and latest_signal.macd else 0.0,
             'macdSignal': round(latest_signal.macd_signal, 2) if latest_signal and latest_signal.macd_signal else 0.0,
             'macdHistogram': round(latest_signal.macd_histogram, 2) if latest_signal and latest_signal.macd_histogram else 0.0,
             'sma5': round(latest_signal.sma5, 0) if latest_signal and latest_signal.sma5 else 0,
             'sma25': round(latest_signal.sma25, 0) if latest_signal and latest_signal.sma25 else 0,
             'sma75': round(latest_signal.sma75, 0) if latest_signal and latest_signal.sma75 else 0,
+            'targetPrice': latest_signal.target_price if latest_signal else None,
+            'stopLossPrice': latest_signal.stop_loss_price if latest_signal else None,
+            'supportPrice': latest_signal.support_price if latest_signal else None,
+            'resistancePrice': latest_signal.resistance_price if latest_signal else None,
             'updatedAt': latest_price.date.isoformat() if latest_price else ''
         }
 
@@ -423,6 +485,85 @@ class StockService:
                 'sma75': round(row['sma75'], 0) if pd.notna(row.get('sma75')) else None,
             })
         return result
+
+    def get_recommendations(self) -> dict:
+        """おすすめ銘柄を取得"""
+        settings = self.get_settings()
+        budget = settings['investmentBudget']
+        stocks = self.get_all_stocks()
+
+        buy_recs = []
+        sell_recs = []
+
+        for s in stocks:
+            if s['signal'] == 'buy' and s['currentPrice'] > 0:
+                latest_signal = self.db.query(Signal).filter(
+                    Signal.code == s['code']
+                ).order_by(Signal.date.desc()).first()
+
+                target = latest_signal.target_price if latest_signal else None
+                stop_loss = latest_signal.stop_loss_price if latest_signal else None
+                current = s['currentPrice']
+
+                # 予算を最大3銘柄に均等配分
+                max_stocks = 3
+                buy_count = min(len([x for x in stocks if x['signal'] == 'buy']), max_stocks)
+                budget_per_stock = budget / buy_count if buy_count > 0 else budget
+                quantity = int(budget_per_stock / current) if current > 0 else 0
+                amount = round(quantity * current)
+
+                expected_profit = round((target - current) * quantity, 1) if target and quantity > 0 else None
+                expected_profit_pct = round((target - current) / current * 100, 1) if target and current > 0 else None
+                risk_amount = round((current - stop_loss) * quantity, 1) if stop_loss and quantity > 0 else None
+
+                buy_recs.append({
+                    'code': s['code'],
+                    'name': s['name'],
+                    'currentPrice': current,
+                    'signal': 'buy',
+                    'signalStrength': s['signalStrength'],
+                    'activeSignals': s['activeSignals'],
+                    'targetPrice': target,
+                    'stopLossPrice': stop_loss,
+                    'suggestedQuantity': quantity,
+                    'suggestedAmount': amount,
+                    'expectedProfit': expected_profit,
+                    'expectedProfitPercent': expected_profit_pct,
+                    'riskAmount': risk_amount,
+                    'rsi': s['rsi'],
+                })
+
+            elif s['signal'] == 'sell':
+                latest_signal = self.db.query(Signal).filter(
+                    Signal.code == s['code']
+                ).order_by(Signal.date.desc()).first()
+
+                sell_recs.append({
+                    'code': s['code'],
+                    'name': s['name'],
+                    'currentPrice': s['currentPrice'],
+                    'signal': 'sell',
+                    'signalStrength': s['signalStrength'],
+                    'activeSignals': s['activeSignals'],
+                    'targetPrice': latest_signal.target_price if latest_signal else None,
+                    'stopLossPrice': latest_signal.stop_loss_price if latest_signal else None,
+                    'suggestedQuantity': None,
+                    'suggestedAmount': None,
+                    'expectedProfit': None,
+                    'expectedProfitPercent': None,
+                    'riskAmount': None,
+                    'rsi': s['rsi'],
+                })
+
+        # シグナル強度降順でソート
+        buy_recs.sort(key=lambda x: x['signalStrength'], reverse=True)
+        sell_recs.sort(key=lambda x: x['signalStrength'], reverse=True)
+
+        return {
+            'buyRecommendations': buy_recs[:3],
+            'sellRecommendations': sell_recs,
+            'investmentBudget': budget,
+        }
 
     def update_all_stocks(self):
         """全銘柄のデータを更新"""

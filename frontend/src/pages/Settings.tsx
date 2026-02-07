@@ -11,6 +11,8 @@ import {
   Slider,
   Alert,
   Snackbar,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import { ArrowBack } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -23,7 +25,10 @@ const DEFAULT_SETTINGS: SettingsType = {
   smaShortPeriod: 5,
   smaMidPeriod: 25,
   smaLongPeriod: 75,
+  investmentBudget: 100000,
 };
+
+const BUDGET_PRESETS = [50000, 100000, 300000, 500000, 1000000];
 
 export default function Settings() {
   const navigate = useNavigate();
@@ -139,6 +144,38 @@ export default function Settings() {
               inputProps={{ min: 50, max: 200 }}
             />
           </Box>
+        </CardContent>
+      </Card>
+
+      <Card sx={{ mb: 2 }}>
+        <CardContent>
+          <Typography variant="subtitle1" fontWeight="bold" mb={2}>
+            投資予算
+          </Typography>
+          <Typography variant="body2" color="text.secondary" mb={2}>
+            おすすめ銘柄の購入株数計算に使用されます
+          </Typography>
+          <ToggleButtonGroup
+            value={BUDGET_PRESETS.includes(settings.investmentBudget) ? settings.investmentBudget : null}
+            exclusive
+            onChange={(_, val) => val != null && setSettings({ ...settings, investmentBudget: val })}
+            sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.5, mb: 2 }}
+          >
+            {BUDGET_PRESETS.map((p) => (
+              <ToggleButton key={p} value={p} sx={{ flex: '1 1 auto', fontSize: '0.75rem' }}>
+                ¥{p.toLocaleString()}
+              </ToggleButton>
+            ))}
+          </ToggleButtonGroup>
+          <TextField
+            label="カスタム金額"
+            type="number"
+            fullWidth
+            size="small"
+            value={settings.investmentBudget}
+            onChange={(e) => setSettings({ ...settings, investmentBudget: Number(e.target.value) })}
+            inputProps={{ min: 10000 }}
+          />
         </CardContent>
       </Card>
 

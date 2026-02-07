@@ -17,6 +17,7 @@ import { useQuery } from '@tanstack/react-query';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import { api } from '../api/client';
 import type { SignalType } from '../types';
+import SignalStrengthDisplay from '../components/SignalStrengthDisplay';
 
 const getSignalColor = (signal: SignalType) => {
   switch (signal) {
@@ -87,7 +88,7 @@ export default function StockDetail() {
   return (
     <Box p={2}>
       <Box display="flex" alignItems="center" mb={2}>
-        <IconButton onClick={() => navigate('/')}>
+        <IconButton onClick={() => navigate(-1)}>
           <ArrowBack />
         </IconButton>
         <Box ml={1}>
@@ -115,14 +116,69 @@ export default function StockDetail() {
                 （前日比 ¥{(stock.currentPrice - stock.previousClose).toLocaleString()}）
               </Typography>
             </Box>
-            <Chip
-              icon={getSignalIcon(stock.signal)}
-              label={getSignalLabel(stock.signal)}
-              color={getSignalColor(stock.signal)}
-            />
+            <Box textAlign="right">
+              <Chip
+                icon={getSignalIcon(stock.signal)}
+                label={getSignalLabel(stock.signal)}
+                color={getSignalColor(stock.signal)}
+              />
+              {stock.signalStrength > 0 && (
+                <Box mt={0.5}>
+                  <SignalStrengthDisplay strength={stock.signalStrength} />
+                </Box>
+              )}
+            </Box>
           </Box>
         </CardContent>
       </Card>
+
+      {(stock.targetPrice || stock.stopLossPrice) && (
+        <Card sx={{ mb: 2, border: '1px solid', borderColor: stock.signal === 'buy' ? 'success.light' : stock.signal === 'sell' ? 'error.light' : 'grey.300' }}>
+          <CardContent>
+            <Typography variant="subtitle1" fontWeight="bold" mb={2}>
+              売買目安
+            </Typography>
+            <Box display="grid" gridTemplateColumns="1fr 1fr" gap={2}>
+              {stock.targetPrice != null && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">目標価格</Typography>
+                  <Typography variant="h6" fontWeight="bold" color="success.main">
+                    ¥{stock.targetPrice.toLocaleString()}
+                  </Typography>
+                </Box>
+              )}
+              {stock.stopLossPrice != null && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">損切りライン</Typography>
+                  <Typography variant="h6" fontWeight="bold" color="error.main">
+                    ¥{stock.stopLossPrice.toLocaleString()}
+                  </Typography>
+                </Box>
+              )}
+              {stock.supportPrice != null && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">支持線 (25日安値)</Typography>
+                  <Typography variant="body1">¥{stock.supportPrice.toLocaleString()}</Typography>
+                </Box>
+              )}
+              {stock.resistancePrice != null && (
+                <Box>
+                  <Typography variant="caption" color="text.secondary">抵抗線 (25日高値)</Typography>
+                  <Typography variant="body1">¥{stock.resistancePrice.toLocaleString()}</Typography>
+                </Box>
+              )}
+            </Box>
+            {stock.activeSignals.length > 0 && (
+              <Box mt={2} display="flex" gap={0.5} flexWrap="wrap">
+                {stock.activeSignals.map((s: string) => (
+                  <Chip key={s} label={s} size="small" variant="outlined"
+                    color={stock.signal === 'buy' ? 'success' : stock.signal === 'sell' ? 'error' : 'default'} />
+                ))}
+              </Box>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card sx={{ mb: 2 }}>
         <CardContent>

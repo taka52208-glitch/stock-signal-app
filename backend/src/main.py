@@ -5,6 +5,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
 
+from sqlalchemy import text
+
 from src.config import settings
 from src.models.database import Base, engine, SessionLocal
 from src.routers import stocks_router, settings_router, transactions_router
@@ -30,6 +32,24 @@ def scheduled_update():
 async def lifespan(app: FastAPI):
     # 起動時
     Base.metadata.create_all(bind=engine)
+
+    # 簡易マイグレーション: signals テーブルに新列追加
+    new_columns = [
+        ("signal_strength", "INTEGER"),
+        ("active_signals", "VARCHAR(100)"),
+        ("target_price", "FLOAT"),
+        ("stop_loss_price", "FLOAT"),
+        ("support_price", "FLOAT"),
+        ("resistance_price", "FLOAT"),
+    ]
+    with engine.connect() as conn:
+        for col_name, col_type in new_columns:
+            try:
+                conn.execute(text(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}"))
+                print(f"[migration] Added column signals.{col_name}")
+            except Exception:
+                pass  # 既に存在する場合はスキップ
+        conn.commit()
 
     # 依存ライブラリチェック
     for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:

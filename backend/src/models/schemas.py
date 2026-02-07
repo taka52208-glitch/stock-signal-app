@@ -16,6 +16,8 @@ class StockResponse(BaseModel):
     changePercent: float
     signal: Literal['buy', 'sell', 'hold']
     rsi: float
+    signalStrength: int = 0
+    activeSignals: list[str] = []
     updatedAt: str
 
     class Config:
@@ -29,6 +31,10 @@ class StockDetailResponse(StockResponse):
     sma5: float
     sma25: float
     sma75: float
+    targetPrice: Optional[float] = None
+    stopLossPrice: Optional[float] = None
+    supportPrice: Optional[float] = None
+    resistancePrice: Optional[float] = None
 
 
 class ChartDataResponse(BaseModel):
@@ -49,6 +55,7 @@ class SettingsRequest(BaseModel):
     smaShortPeriod: int = Field(..., ge=1, le=50)
     smaMidPeriod: int = Field(..., ge=10, le=100)
     smaLongPeriod: int = Field(..., ge=50, le=200)
+    investmentBudget: Optional[int] = Field(None, ge=10000, le=100000000)
 
 
 class SettingsResponse(BaseModel):
@@ -57,6 +64,30 @@ class SettingsResponse(BaseModel):
     smaShortPeriod: int
     smaMidPeriod: int
     smaLongPeriod: int
+    investmentBudget: int
+
+
+class RecommendationResponse(BaseModel):
+    code: str
+    name: str
+    currentPrice: float
+    signal: Literal['buy', 'sell']
+    signalStrength: int
+    activeSignals: list[str]
+    targetPrice: Optional[float] = None
+    stopLossPrice: Optional[float] = None
+    suggestedQuantity: Optional[int] = None
+    suggestedAmount: Optional[int] = None
+    expectedProfit: Optional[float] = None
+    expectedProfitPercent: Optional[float] = None
+    riskAmount: Optional[float] = None
+    rsi: float
+
+
+class RecommendationsResponse(BaseModel):
+    buyRecommendations: list[RecommendationResponse]
+    sellRecommendations: list[RecommendationResponse]
+    investmentBudget: int
 
 
 class MessageResponse(BaseModel):

@@ -39,6 +39,12 @@ class Signal(Base):
     sma5 = Column(Float)
     sma25 = Column(Float)
     sma75 = Column(Float)
+    signal_strength = Column(Integer, nullable=True)  # 1〜3
+    active_signals = Column(String(100), nullable=True)  # カンマ区切り: "RSI,MACD,GoldenCross"
+    target_price = Column(Float, nullable=True)
+    stop_loss_price = Column(Float, nullable=True)
+    support_price = Column(Float, nullable=True)
+    resistance_price = Column(Float, nullable=True)
 
 
 class Setting(Base):

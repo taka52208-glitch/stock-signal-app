@@ -18,4 +18,5 @@ def get_settings(db: Session = Depends(get_db)):
 def update_settings(request: SettingsRequest, db: Session = Depends(get_db)):
     """設定を更新"""
     service = StockService(db)
-    return service.update_settings(request.model_dump())
+    data = {k: v for k, v in request.model_dump().items() if v is not None}
+    return service.update_settings(data)

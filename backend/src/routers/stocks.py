@@ -6,21 +6,29 @@ from src.models.schemas import (
     StockResponse,
     StockDetailResponse,
     ChartDataResponse,
-    MessageResponse
+    MessageResponse,
+    RecommendationsResponse
 )
 from src.services.stock_service import StockService
 
-router = APIRouter(prefix='/api/stocks', tags=['stocks'])
+router = APIRouter(prefix='/api', tags=['stocks'])
 
 
-@router.get('', response_model=list[StockResponse])
+@router.get('/recommendations', response_model=RecommendationsResponse)
+def get_recommendations(db: Session = Depends(get_db)):
+    """おすすめ銘柄を取得"""
+    service = StockService(db)
+    return service.get_recommendations()
+
+
+@router.get('/stocks', response_model=list[StockResponse])
 def get_stocks(db: Session = Depends(get_db)):
     """監視銘柄一覧を取得"""
     service = StockService(db)
     return service.get_all_stocks()
 
 
-@router.post('', response_model=StockResponse)
+@router.post('/stocks', response_model=StockResponse)
 def add_stock(request: AddStockRequest, db: Session = Depends(get_db)):
     """銘柄を追加"""
     service = StockService(db)
@@ -35,7 +43,7 @@ def add_stock(request: AddStockRequest, db: Session = Depends(get_db)):
     return added
 
 
-@router.delete('/{code}')
+@router.delete('/stocks/{code}')
 def delete_stock(code: str, db: Session = Depends(get_db)):
     """銘柄を削除"""
     service = StockService(db)
@@ -44,7 +52,7 @@ def delete_stock(code: str, db: Session = Depends(get_db)):
     return {'message': '削除しました'}
 
 
-@router.get('/{code}', response_model=StockDetailResponse)
+@router.get('/stocks/{code}', response_model=StockDetailResponse)
 def get_stock_detail(code: str, db: Session = Depends(get_db)):
     """銘柄詳細を取得"""
     service = StockService(db)
@@ -54,7 +62,7 @@ def get_stock_detail(code: str, db: Session = Depends(get_db)):
     return detail
 
 
-@router.get('/{code}/chart', response_model=list[ChartDataResponse])
+@router.get('/stocks/{code}/chart', response_model=list[ChartDataResponse])
 def get_chart_data(code: str, period: str = '3m', db: Session = Depends(get_db)):
     """チャートデータを取得"""
     service = StockService(db)

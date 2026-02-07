@@ -11,6 +11,8 @@ export interface Stock {
   changePercent: number;
   signal: SignalType;
   rsi: number;
+  signalStrength: number;
+  activeSignals: string[];
   updatedAt: string;
 }
 
@@ -22,6 +24,10 @@ export interface StockDetail extends Stock {
   sma5: number;
   sma25: number;
   sma75: number;
+  targetPrice: number | null;
+  stopLossPrice: number | null;
+  supportPrice: number | null;
+  resistancePrice: number | null;
 }
 
 // チャートデータ
@@ -44,6 +50,32 @@ export interface Settings {
   smaShortPeriod: number;
   smaMidPeriod: number;
   smaLongPeriod: number;
+  investmentBudget: number;
+}
+
+// おすすめ銘柄
+export interface Recommendation {
+  code: string;
+  name: string;
+  currentPrice: number;
+  signal: 'buy' | 'sell';
+  signalStrength: number;
+  activeSignals: string[];
+  targetPrice: number | null;
+  stopLossPrice: number | null;
+  suggestedQuantity: number | null;
+  suggestedAmount: number | null;
+  expectedProfit: number | null;
+  expectedProfitPercent: number | null;
+  riskAmount: number | null;
+  rsi: number;
+}
+
+// おすすめ一覧レスポンス
+export interface Recommendations {
+  buyRecommendations: Recommendation[];
+  sellRecommendations: Recommendation[];
+  investmentBudget: number;
 }
 
 // APIレスポンス
