@@ -7,7 +7,7 @@ interface Props {
   initialCapital: number;
 }
 
-export default function EquityCurveChart({ snapshots, initialCapital }: Props) {
+export default function EquityCurveChart({ snapshots, initialCapital: _initialCapital }: Props) {
   if (!snapshots.length) return null;
 
   const data = snapshots.map((s) => ({
@@ -32,7 +32,7 @@ export default function EquityCurveChart({ snapshots, initialCapital }: Props) {
               tickFormatter={(v) => `¥${(v / 10000).toFixed(0)}万`}
             />
             <Tooltip
-              formatter={(value: number) => [`¥${value.toLocaleString()}`, '']}
+              formatter={(value: number | undefined) => [`¥${(value ?? 0).toLocaleString()}`, '']}
               labelFormatter={(label) => `日付: ${label}`}
             />
             <Legend />

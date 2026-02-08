@@ -5,7 +5,7 @@ interface Props {
   initialCapital: number;
 }
 
-export default function PerformanceMetricsCard({ summary, initialCapital }: Props) {
+export default function PerformanceMetricsCard({ summary, initialCapital: _initialCapital }: Props) {
   const metrics = [
     {
       label: '最終資産',
