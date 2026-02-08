@@ -12,8 +12,8 @@ from src.services.stock_service import StockService
 
 DEFAULT_CONFIG = {
     'enabled': 'false',
-    'minSignalStrength': '2',
-    'maxTradesPerDay': '3',
+    'minSignalStrength': '3',
+    'maxTradesPerDay': '2',
     'orderType': 'market',
     'dryRun': 'true',
 }
@@ -153,6 +153,25 @@ class AutoTradeService:
                 qty -= t.quantity
         return max(qty, 0)
 
+    def _get_entry_price(self, code: str) -> float | None:
+        """保有銘柄の平均取得単価を計算"""
+        transactions = self.db.query(Transaction).filter(
+            Transaction.code == code
+        ).order_by(Transaction.transaction_date).all()
+        qty = 0
+        total_cost = 0.0
+        for t in transactions:
+            if t.transaction_type == 'buy':
+                qty += t.quantity
+                total_cost += t.quantity * t.price
+            else:
+                if qty > 0:
+                    avg = total_cost / qty
+                    sell_qty = min(t.quantity, qty)
+                    qty -= sell_qty
+                    total_cost -= sell_qty * avg
+        return (total_cost / qty) if qty > 0 else None
+
     def process_auto_trades(self):
         """自動売買メイン処理（scheduled_updateから呼ばれる）"""
         config = self.get_config()
@@ -191,8 +210,103 @@ class AutoTradeService:
                 Signal.code == code
             ).order_by(Signal.date.desc()).first()
 
-            if not latest_signal or latest_signal.signal_type == 'hold':
+            if not latest_signal:
                 continue
+
+            # a.1 最新価格取得
+            latest_price = self.db.query(StockPrice).filter(
+                StockPrice.code == code
+            ).order_by(StockPrice.date.desc()).first()
+            if not latest_price:
+                continue
+            current_price = latest_price.close
+
+            # a.2 holdシグナル → 利益確保チェック（ログのみ）
+            if latest_signal.signal_type == 'hold':
+                entry_price = self._get_entry_price(code)
+                if entry_price and current_price > 0:
+                    gain_pct = ((current_price - entry_price) / entry_price) * 100
+                    if gain_pct >= 5.0:
+                        # 直近2日の価格で下落傾向か確認
+                        recent_2 = self.db.query(StockPrice).filter(
+                            StockPrice.code == code
+                        ).order_by(StockPrice.date.desc()).limit(2).all()
+                        if len(recent_2) == 2 and recent_2[0].close < recent_2[1].close:
+                            print(
+                                f"[auto-trade] {code}: 利益確保売却推奨 "
+                                f"(含み益 {gain_pct:.1f}%, 直近下落中)"
+                            )
+                continue
+
+            # a.3 シグナル持続性チェック（2日連続同方向か？）
+            prev_signal = self.db.query(Signal).filter(
+                Signal.code == code
+            ).order_by(Signal.date.desc()).offset(1).first()
+            if not prev_signal or prev_signal.signal_type != latest_signal.signal_type:
+                self._add_log(
+                    code=code,
+                    signal_type=latest_signal.signal_type,
+                    signal_strength=latest_signal.signal_strength or 0,
+                    active_signals=latest_signal.active_signals,
+                    result_status='skipped',
+                    result_message='シグナル持続性不足（2日連続同方向でない）',
+                    dry_run=config['dryRun'],
+                )
+                continue
+
+            # a.4 出来高確認（20日平均の1.2倍以上か？）
+            recent_prices = self.db.query(StockPrice).filter(
+                StockPrice.code == code
+            ).order_by(StockPrice.date.desc()).limit(21).all()
+            if len(recent_prices) >= 2:
+                today_volume = recent_prices[0].volume or 0
+                past_volumes = [p.volume for p in recent_prices[1:] if p.volume]
+                if past_volumes:
+                    avg_volume_20d = sum(past_volumes) / len(past_volumes)
+                    if today_volume < avg_volume_20d * 1.2:
+                        self._add_log(
+                            code=code,
+                            signal_type=latest_signal.signal_type,
+                            signal_strength=latest_signal.signal_strength or 0,
+                            active_signals=latest_signal.active_signals,
+                            result_status='skipped',
+                            result_message=f'出来高不足（{today_volume:,} < 20日平均{avg_volume_20d:,.0f}×1.2）',
+                            dry_run=config['dryRun'],
+                        )
+                        continue
+
+            # a.5 トレンドフィルター（SMA75 vs 価格）
+            sma75 = latest_signal.sma75
+            rsi = latest_signal.rsi
+            if sma75 and sma75 > 0:
+                if latest_signal.signal_type == 'buy':
+                    # 買い: 価格 > SMA75（上昇トレンド）のみ。例外: RSI < 25
+                    if current_price < sma75 and (rsi is None or rsi >= 25):
+                        self._add_log(
+                            code=code,
+                            signal_type='buy',
+                            signal_strength=latest_signal.signal_strength or 0,
+                            active_signals=latest_signal.active_signals,
+                            order_price=current_price,
+                            result_status='skipped',
+                            result_message=f'トレンドフィルター: 価格({current_price:,.0f}) < SMA75({sma75:,.0f})',
+                            dry_run=config['dryRun'],
+                        )
+                        continue
+                elif latest_signal.signal_type == 'sell':
+                    # 売り: 価格 < SMA75（下降トレンド）のみ。例外: RSI > 75
+                    if current_price > sma75 and (rsi is None or rsi <= 75):
+                        self._add_log(
+                            code=code,
+                            signal_type='sell',
+                            signal_strength=latest_signal.signal_strength or 0,
+                            active_signals=latest_signal.active_signals,
+                            order_price=current_price,
+                            result_status='skipped',
+                            result_message=f'トレンドフィルター: 価格({current_price:,.0f}) > SMA75({sma75:,.0f})',
+                            dry_run=config['dryRun'],
+                        )
+                        continue
 
             # b. シグナル強度チェック
             strength = latest_signal.signal_strength or 0
@@ -208,16 +322,9 @@ class AutoTradeService:
                 )
                 continue
 
-            # c. 数量計算
-            latest_price = self.db.query(StockPrice).filter(
-                StockPrice.code == code
-            ).order_by(StockPrice.date.desc()).first()
-            if not latest_price:
-                continue
-
-            current_price = latest_price.close
+            # c. 数量計算（1銘柄あたり20%に制限）
             if latest_signal.signal_type == 'buy':
-                budget = settings['investmentBudget'] / 3
+                budget = settings['investmentBudget'] / 5
                 quantity = int(budget / current_price) if current_price > 0 else 0
                 if quantity <= 0:
                     self._add_log(

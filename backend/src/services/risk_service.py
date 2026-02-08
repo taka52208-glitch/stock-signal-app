@@ -88,10 +88,11 @@ class RiskService:
                 position_pct = (trade_amount / (total_value + trade_amount)) * 100
                 if position_pct > rules['maxPositionPercent']:
                     warnings.append({
-                        'level': 'warning',
+                        'level': 'error',
                         'message': f'この取引でポートフォリオの{position_pct:.1f}%を占めます'
                               f'（上限{rules["maxPositionPercent"]:.0f}%）',
                     })
+                    passed = False
 
             # 損失リスクチェック
             latest_signal = self.db.query(Signal).filter(
@@ -101,10 +102,29 @@ class RiskService:
                 potential_loss_pct = ((price - latest_signal.stop_loss_price) / price) * 100
                 if potential_loss_pct > rules['maxLossPerTrade']:
                     warnings.append({
-                        'level': 'warning',
+                        'level': 'error',
                         'message': f'損切りラインまでの損失率が{potential_loss_pct:.1f}%です'
                               f'（上限{rules["maxLossPerTrade"]:.0f}%）',
                     })
+                    passed = False
+
+            # ポートフォリオ全体損失率チェック
+            if total_value > 0:
+                total_cost = 0.0
+                for c, data in holdings.items():
+                    qty = data['buy_qty'] - data['sell_qty']
+                    if qty > 0 and data['buy_qty'] > 0:
+                        avg_cost = data['buy_total'] / data['buy_qty']
+                        total_cost += qty * avg_cost
+                if total_cost > 0:
+                    portfolio_loss_pct = ((total_cost - total_value) / total_cost) * 100
+                    if portfolio_loss_pct > rules['maxPortfolioLoss']:
+                        warnings.append({
+                            'level': 'error',
+                            'message': f'ポートフォリオ全体の損失率が{portfolio_loss_pct:.1f}%です'
+                                  f'（上限{rules["maxPortfolioLoss"]:.0f}%）',
+                        })
+                        passed = False
 
         return {
             'passed': passed,
