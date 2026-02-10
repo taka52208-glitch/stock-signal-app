@@ -19,7 +19,7 @@ class KabuStationClient:
 
     async def connect(self) -> str:
         """APIトークンを取得"""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(headers={'Host': 'localhost'}) as client:
             resp = await client.post(
                 f'{self.base_url}/token',
                 json={'APIPassword': self.api_password},
@@ -30,7 +30,7 @@ class KabuStationClient:
             return self.token
 
     def _headers(self) -> dict:
-        return {'X-API-KEY': self.token or ''}
+        return {'X-API-KEY': self.token or '', 'Host': 'localhost'}
 
     async def get_balance(self) -> dict:
         """残高照会"""
