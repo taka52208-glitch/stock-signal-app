@@ -11,6 +11,8 @@ import type {
 
 const BASE_URL = config.apiUrl;
 
+let tunnelUrl: string | null = null;
+
 async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const response = await fetch(`${BASE_URL}${endpoint}`, {
     headers: {
@@ -23,6 +25,24 @@ async function fetchApi<T>(endpoint: string, options?: RequestInit): Promise<T> 
     throw new Error(`API Error: ${response.status}`);
   }
 
+  return response.json();
+}
+
+async function fetchTunnelApi<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  if (!tunnelUrl) {
+    const res = await fetchApi<{ url: string }>('/api/settings/tunnel-url');
+    tunnelUrl = res.url || null;
+  }
+  if (!tunnelUrl) {
+    throw new Error('証券会社連携はオフラインです（PCが起動していません）');
+  }
+  const response = await fetch(`${tunnelUrl}${endpoint}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options,
+  });
+  if (!response.ok) {
+    throw new Error(`API Error: ${response.status}`);
+  }
   return response.json();
 }
 
@@ -122,33 +142,36 @@ export const api = {
       method: 'POST', body: JSON.stringify({ ids }),
     }),
 
-  // 証券API
-  getBrokerageConfig: () => fetchApi<BrokerageConfig>('/api/brokerage/config'),
+  // 証券API（トンネル経由）
+  getBrokerageConfig: () => fetchTunnelApi<BrokerageConfig>('/api/brokerage/config'),
   updateBrokerageConfig: (data: Partial<BrokerageConfig>) =>
-    fetchApi<BrokerageConfig>('/api/brokerage/config', { method: 'PUT', body: JSON.stringify(data) }),
+    fetchTunnelApi<BrokerageConfig>('/api/brokerage/config', { method: 'PUT', body: JSON.stringify(data) }),
   connectBrokerage: () =>
-    fetchApi<{ connected: boolean; message: string }>('/api/brokerage/connect', { method: 'POST' }),
-  getBrokerageBalance: () => fetchApi<BrokerageBalance>('/api/brokerage/balance'),
-  getBrokeragePositions: () => fetchApi<BrokeragePosition[]>('/api/brokerage/positions'),
-  getOrders: () => fetchApi<Order[]>('/api/brokerage/orders'),
+    fetchTunnelApi<{ connected: boolean; message: string }>('/api/brokerage/connect', { method: 'POST' }),
+  getBrokerageBalance: () => fetchTunnelApi<BrokerageBalance>('/api/brokerage/balance'),
+  getBrokeragePositions: () => fetchTunnelApi<BrokeragePosition[]>('/api/brokerage/positions'),
+  getOrders: () => fetchTunnelApi<Order[]>('/api/brokerage/orders'),
   createOrder: (data: OrderCreateRequest) =>
-    fetchApi<Order>('/api/brokerage/orders', { method: 'POST', body: JSON.stringify(data) }),
+    fetchTunnelApi<Order>('/api/brokerage/orders', { method: 'POST', body: JSON.stringify(data) }),
   cancelOrder: (id: number) =>
-    fetchApi<void>(`/api/brokerage/orders/${id}`, { method: 'DELETE' }),
+    fetchTunnelApi<void>(`/api/brokerage/orders/${id}`, { method: 'DELETE' }),
   syncBrokerage: () =>
-    fetchApi<{ message: string }>('/api/brokerage/sync', { method: 'POST' }),
+    fetchTunnelApi<{ message: string }>('/api/brokerage/sync', { method: 'POST' }),
 
-  // 自動売買
-  getAutoTradeConfig: () => fetchApi<AutoTradeConfig>('/api/auto-trade/config'),
+  // 自動売買（トンネル経由）
+  getAutoTradeConfig: () => fetchTunnelApi<AutoTradeConfig>('/api/auto-trade/config'),
   updateAutoTradeConfig: (data: Partial<AutoTradeConfig>) =>
-    fetchApi<AutoTradeConfig>('/api/auto-trade/config', { method: 'PUT', body: JSON.stringify(data) }),
+    fetchTunnelApi<AutoTradeConfig>('/api/auto-trade/config', { method: 'PUT', body: JSON.stringify(data) }),
   toggleAutoTrade: (enabled: boolean) =>
-    fetchApi<AutoTradeConfig>('/api/auto-trade/toggle', { method: 'POST', body: JSON.stringify({ enabled }) }),
+    fetchTunnelApi<AutoTradeConfig>('/api/auto-trade/toggle', { method: 'POST', body: JSON.stringify({ enabled }) }),
   getAutoTradeLog: (limit: number = 50) =>
-    fetchApi<AutoTradeLog[]>(`/api/auto-trade/log?limit=${limit}`),
-  getAutoTradeStocks: () => fetchApi<AutoTradeStockSetting[]>('/api/auto-trade/stocks'),
+    fetchTunnelApi<AutoTradeLog[]>(`/api/auto-trade/log?limit=${limit}`),
+  getAutoTradeStocks: () => fetchTunnelApi<AutoTradeStockSetting[]>('/api/auto-trade/stocks'),
   updateAutoTradeStock: (code: string, enabled: boolean) =>
-    fetchApi<AutoTradeStockSetting>(`/api/auto-trade/stocks/${code}`, {
+    fetchTunnelApi<AutoTradeStockSetting>(`/api/auto-trade/stocks/${code}`, {
       method: 'PUT', body: JSON.stringify({ enabled }),
     }),
+
+  // トンネルURLキャッシュクリア
+  clearTunnelCache: () => { tunnelUrl = null; },
 };

@@ -52,7 +52,7 @@ class Setting(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     key = Column(String(50), unique=True, nullable=False)
-    value = Column(String(100), nullable=False)
+    value = Column(String(500), nullable=False)
 
 
 class Transaction(Base):

@@ -67,6 +67,15 @@ async def lifespan(app: FastAPI):
                 pass  # 既に存在する場合はスキップ
         conn.commit()
 
+    # 簡易マイグレーション: settings.value 列幅拡張
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE settings ALTER COLUMN value TYPE VARCHAR(500)"))
+            print("[migration] Expanded settings.value to VARCHAR(500)")
+        except Exception:
+            pass
+        conn.commit()
+
     # 依存ライブラリチェック
     for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:
         try:
