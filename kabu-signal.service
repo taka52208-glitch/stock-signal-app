@@ -1,0 +1,17 @@
+[Unit]
+Description=KabuSignal Backend + Tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=taka
+WorkingDirectory=/home/taka/優良株情報取得ツール
+ExecStart=/home/taka/優良株情報取得ツール/start.sh
+Restart=on-failure
+RestartSec=10
+Environment=HOME=/home/taka
+Environment=PATH=/home/taka/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+[Install]
+WantedBy=multi-user.target

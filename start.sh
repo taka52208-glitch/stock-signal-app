@@ -6,6 +6,13 @@ CLOUDFLARED="$HOME/bin/cloudflared"
 LOG_DIR="$HOME/.kabu-signal"
 mkdir -p "$LOG_DIR"
 
+# ネットワーク準備待ち（再起動直後対策）
+for i in $(seq 1 30); do
+  curl -s --max-time 2 https://www.google.com > /dev/null 2>&1 && break
+  echo "ネットワーク待ち... ($i/30)"
+  sleep 2
+done
+
 # バックエンド起動
 cd backend
 source venv/bin/activate
