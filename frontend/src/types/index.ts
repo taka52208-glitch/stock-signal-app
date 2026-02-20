@@ -324,6 +324,29 @@ export interface AutoTradeStockSetting {
   enabled: boolean;
 }
 
+export interface VirtualHolding {
+  code: string;
+  name: string;
+  quantity: number;
+  averagePrice: number;
+  currentPrice: number;
+  totalCost: number;
+  currentValue: number;
+  profitLoss: number;
+  profitLossPercent: number;
+}
+
+export interface VirtualPortfolio {
+  holdings: VirtualHolding[];
+  totalCost: number;
+  totalValue: number;
+  totalProfitLoss: number;
+  totalProfitLossPercent: number;
+  realizedProfitLoss: number;
+  unrealizedProfitLoss: number;
+  tradeCount: number;
+}
+
 export interface AutoTradeLog {
   id: number;
   code: string;

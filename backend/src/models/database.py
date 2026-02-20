@@ -8,10 +8,14 @@ if db_url.startswith('postgresql://'):
     db_url = db_url.replace('postgresql://', 'postgresql+psycopg://', 1)
 print(f"[database] Using: {db_url[:30]}...")
 
-engine = create_engine(
-    db_url,
-    connect_args={'check_same_thread': False} if 'sqlite' in settings.database_url else {}
-)
+engine_args = {}
+if 'sqlite' in db_url:
+    engine_args['connect_args'] = {'check_same_thread': False}
+else:
+    engine_args['pool_pre_ping'] = True
+    engine_args['pool_recycle'] = 300
+
+engine = create_engine(db_url, **engine_args)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 Base = declarative_base()

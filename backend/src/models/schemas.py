@@ -381,6 +381,29 @@ class AutoTradeStockUpdateRequest(BaseModel):
     enabled: bool
 
 
+class VirtualHoldingResponse(BaseModel):
+    code: str
+    name: str
+    quantity: int
+    averagePrice: float
+    currentPrice: float
+    totalCost: float
+    currentValue: float
+    profitLoss: float
+    profitLossPercent: float
+
+
+class VirtualPortfolioResponse(BaseModel):
+    holdings: list[VirtualHoldingResponse]
+    totalCost: float
+    totalValue: float
+    totalProfitLoss: float
+    totalProfitLossPercent: float
+    realizedProfitLoss: float
+    unrealizedProfitLoss: float
+    tradeCount: int
+
+
 class AutoTradeLogResponse(BaseModel):
     id: int
     code: str

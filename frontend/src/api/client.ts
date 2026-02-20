@@ -6,7 +6,7 @@ import type {
   TradeEvaluation, Checklist, PriceSuggestions,
   BacktestSummary, BacktestCreateRequest, BacktestDetail, BacktestTrade, BacktestSnapshot,
   BrokerageConfig, BrokerageBalance, BrokeragePosition, OrderCreateRequest, Order,
-  AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog,
+  AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog, VirtualPortfolio,
 } from '../types';
 
 const BASE_URL = config.apiUrl;
@@ -158,17 +158,18 @@ export const api = {
   syncBrokerage: () =>
     fetchTunnelApi<{ message: string }>('/api/brokerage/sync', { method: 'POST' }),
 
-  // 自動売買（トンネル経由）
-  getAutoTradeConfig: () => fetchTunnelApi<AutoTradeConfig>('/api/auto-trade/config'),
+  // 自動売買（DB操作のみなので通常API経由）
+  getAutoTradeConfig: () => fetchApi<AutoTradeConfig>('/api/auto-trade/config'),
   updateAutoTradeConfig: (data: Partial<AutoTradeConfig>) =>
-    fetchTunnelApi<AutoTradeConfig>('/api/auto-trade/config', { method: 'PUT', body: JSON.stringify(data) }),
+    fetchApi<AutoTradeConfig>('/api/auto-trade/config', { method: 'PUT', body: JSON.stringify(data) }),
   toggleAutoTrade: (enabled: boolean) =>
-    fetchTunnelApi<AutoTradeConfig>('/api/auto-trade/toggle', { method: 'POST', body: JSON.stringify({ enabled }) }),
+    fetchApi<AutoTradeConfig>('/api/auto-trade/toggle', { method: 'POST', body: JSON.stringify({ enabled }) }),
   getAutoTradeLog: (limit: number = 50) =>
-    fetchTunnelApi<AutoTradeLog[]>(`/api/auto-trade/log?limit=${limit}`),
-  getAutoTradeStocks: () => fetchTunnelApi<AutoTradeStockSetting[]>('/api/auto-trade/stocks'),
+    fetchApi<AutoTradeLog[]>(`/api/auto-trade/log?limit=${limit}`),
+  getVirtualPortfolio: () => fetchApi<VirtualPortfolio>('/api/auto-trade/virtual-portfolio'),
+  getAutoTradeStocks: () => fetchApi<AutoTradeStockSetting[]>('/api/auto-trade/stocks'),
   updateAutoTradeStock: (code: string, enabled: boolean) =>
-    fetchTunnelApi<AutoTradeStockSetting>(`/api/auto-trade/stocks/${code}`, {
+    fetchApi<AutoTradeStockSetting>(`/api/auto-trade/stocks/${code}`, {
       method: 'PUT', body: JSON.stringify({ enabled }),
     }),
 

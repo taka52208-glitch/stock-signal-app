@@ -1,6 +1,8 @@
+import logging
 import signal
 import sys
 from contextlib import asynccontextmanager
+from datetime import datetime, time, date
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -18,30 +20,79 @@ from src.services.stock_service import StockService
 from src.services.alert_service import AlertService
 from src.services.auto_trade_service import AutoTradeService
 
+logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+logger = logging.getLogger(__name__)
+
 scheduler = BackgroundScheduler()
+
+# スケジュール時刻（平日のみ）— 取引時間中は1時間ごと
+SCHEDULE_TIMES = [
+    time(9, 30), time(10, 30), time(11, 30),
+    time(12, 30), time(13, 30), time(14, 30), time(15, 30),
+]
+
+
+def _is_trading_day(d: date = None) -> bool:
+    """平日かどうか"""
+    return (d or date.today()).weekday() < 5
+
+
+def _should_have_run_today() -> bool:
+    """今日のスケジュール時刻を過ぎているか"""
+    if not _is_trading_day():
+        return False
+    now = datetime.now().time()
+    return any(now >= t for t in SCHEDULE_TIMES)
+
+
+def _data_is_stale() -> bool:
+    """最新データが今日より古いか"""
+    db = SessionLocal()
+    try:
+        from src.models.stock import StockPrice
+        latest = db.query(StockPrice).order_by(StockPrice.date.desc()).first()
+        if not latest:
+            return True
+        return latest.date < date.today()
+    finally:
+        db.close()
 
 
 def scheduled_update():
     """定期更新ジョブ"""
+    logger.info("=== Scheduled update started ===")
     db = SessionLocal()
     try:
         service = StockService(db)
         service.update_all_stocks()
-        print("Stock data updated successfully")
+        logger.info("Stock data updated successfully")
 
-        # アラートチェック
         alert_service = AlertService(db)
         alert_service.check_alerts()
-        print("Alert check completed")
+        logger.info("Alert check completed")
 
-        # 自動売買処理
         auto_trade_service = AutoTradeService(db)
+        auto_config = auto_trade_service.get_config()
+        logger.info(f"Auto-trade config: enabled={auto_config['enabled']}, dryRun={auto_config['dryRun']}")
         auto_trade_service.process_auto_trades()
-        print("Auto-trade processing completed")
+        logger.info("Auto-trade processing completed")
     except Exception as e:
-        print(f"Scheduled update failed: {e}")
+        logger.error(f"Scheduled update failed: {e}", exc_info=True)
     finally:
         db.close()
+    logger.info("=== Scheduled update finished ===")
+
+
+def watchdog_check():
+    """WSLスリープ復帰対策: データが古ければ即時更新"""
+    if not _is_trading_day():
+        return
+    if not _should_have_run_today():
+        return
+    if not _data_is_stale():
+        return
+    logger.info("[watchdog] Stale data detected after sleep/resume, running catch-up update")
+    scheduled_update()
 
 
 @asynccontextmanager
@@ -80,22 +131,38 @@ async def lifespan(app: FastAPI):
     for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:
         try:
             mod = __import__(lib)
-            print(f"[startup] {lib} {getattr(mod, '__version__', 'ok')}")
+            logger.info(f"[startup] {lib} {getattr(mod, '__version__', 'ok')}")
         except ImportError as e:
-            print(f"[startup] {lib} UNAVAILABLE: {e}")
+            logger.warning(f"[startup] {lib} UNAVAILABLE: {e}")
 
-    # スケジューラー設定（平日 9:30, 12:30, 15:30）
-    scheduler.add_job(scheduled_update, 'cron', hour=9, minute=30, day_of_week='mon-fri', id='update_0930')
-    scheduler.add_job(scheduled_update, 'cron', hour=12, minute=30, day_of_week='mon-fri', id='update_1230')
-    scheduler.add_job(scheduled_update, 'cron', hour=15, minute=30, day_of_week='mon-fri', id='update_1530')
+    # スケジューラー設定（平日 取引時間中1時間ごと）
+    for t in SCHEDULE_TIMES:
+        job_id = f'update_{t.hour:02d}{t.minute:02d}'
+        scheduler.add_job(
+            scheduled_update, 'cron', hour=t.hour, minute=t.minute,
+            day_of_week='mon-fri', id=job_id, misfire_grace_time=3600,
+        )
+    # WSLスリープ復帰対策: 5分ごとにデータ鮮度チェック
+    scheduler.add_job(
+        watchdog_check, 'interval', minutes=5,
+        id='watchdog', misfire_grace_time=600,
+    )
+
     scheduler.start()
-    print("Scheduler started")
+    logger.info("Scheduler started")
+
+    # 起動時キャッチアップ: 平日でスケジュール時刻を過ぎていればデータ鮮度チェック
+    if _should_have_run_today() and _data_is_stale():
+        logger.info("[startup] Catch-up: data is stale, running update now")
+        scheduler.add_job(scheduled_update, id='startup_catchup')
+    else:
+        logger.info("[startup] No catch-up needed")
 
     yield
 
     # 終了時
     scheduler.shutdown()
-    print("Scheduler stopped")
+    logger.info("Scheduler stopped")
 
 
 app = FastAPI(
@@ -147,7 +214,7 @@ def trigger_update():
 
 # グレースフルシャットダウン
 def handle_sigterm(signum, frame):
-    print("Received SIGTERM, shutting down...")
+    logger.info("Received SIGTERM, shutting down...")
     scheduler.shutdown(wait=False)
     sys.exit(0)
 

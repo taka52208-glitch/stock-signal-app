@@ -16,6 +16,7 @@ done
 # バックエンド起動
 cd backend
 source venv/bin/activate
+export PYTHONUNBUFFERED=1
 python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8734 &
 BACK_PID=$!
 echo "バックエンド起動中... (PID: $BACK_PID)"
@@ -34,7 +35,7 @@ echo "トンネル起動中... (PID: $TUNNEL_PID)"
 # トンネルURL取得待ち
 TUNNEL_URL=""
 for i in $(seq 1 15); do
-  TUNNEL_URL=$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG_DIR/tunnel.log" | head -1)
+  TUNNEL_URL=$(grep -ao 'https://[a-z0-9-]*\.trycloudflare\.com' "$LOG_DIR/tunnel.log" | head -1)
   if [ -n "$TUNNEL_URL" ]; then
     break
   fi
@@ -60,15 +61,34 @@ echo "トンネル: $TUNNEL_URL"
 echo "終了: Ctrl+C"
 echo ""
 
+STOPPING=false
+
 cleanup() {
+  STOPPING=true
   echo "停止中..."
   # トンネルURLをクリア
   curl -s -X PUT "$RENDER_API/api/settings/tunnel-url" \
     -H "Content-Type: application/json" \
     -d '{"url": ""}' > /dev/null 2>&1
-  kill $BACK_PID $TUNNEL_PID 2>/dev/null
+  kill $BACK_PID $TUNNEL_PID $WATCHDOG_PID 2>/dev/null
   exit
 }
 
 trap cleanup INT TERM
+
+# バックエンド監視ループ（落ちたら自動再起動）
+while true; do
+  if ! kill -0 $BACK_PID 2>/dev/null; then
+    if [ "$STOPPING" = true ]; then
+      break
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] バックエンド停止を検知、再起動します..."
+    python3 -m uvicorn src.main:app --host 0.0.0.0 --port 8734 &
+    BACK_PID=$!
+    echo "$(date '+%Y-%m-%d %H:%M:%S') [watchdog] バックエンド再起動完了 (PID: $BACK_PID)"
+  fi
+  sleep 30
+done &
+WATCHDOG_PID=$!
+
 wait

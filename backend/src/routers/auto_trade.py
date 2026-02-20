@@ -5,6 +5,7 @@ from src.models.schemas import (
     AutoTradeConfigResponse, AutoTradeConfigUpdateRequest,
     AutoTradeToggleRequest, AutoTradeStockSettingResponse,
     AutoTradeStockUpdateRequest, AutoTradeLogResponse,
+    VirtualPortfolioResponse,
 )
 from src.services.auto_trade_service import AutoTradeService
 
@@ -34,6 +35,12 @@ def toggle(request: AutoTradeToggleRequest, db: Session = Depends(get_db)):
 def get_log(limit: int = 50, db: Session = Depends(get_db)):
     service = AutoTradeService(db)
     return service.get_logs(limit)
+
+
+@router.get('/virtual-portfolio', response_model=VirtualPortfolioResponse)
+def get_virtual_portfolio(db: Session = Depends(get_db)):
+    service = AutoTradeService(db)
+    return service.get_virtual_portfolio()
 
 
 @router.get('/stocks', response_model=list[AutoTradeStockSettingResponse])
