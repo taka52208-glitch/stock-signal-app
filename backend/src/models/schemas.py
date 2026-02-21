@@ -357,6 +357,8 @@ class AutoTradeConfigResponse(BaseModel):
     maxTradesPerDay: int
     orderType: str
     dryRun: bool
+    takeProfitPercent: float
+    stopLossPercent: float
 
 
 class AutoTradeConfigUpdateRequest(BaseModel):
@@ -365,6 +367,8 @@ class AutoTradeConfigUpdateRequest(BaseModel):
     maxTradesPerDay: Optional[int] = Field(None, ge=1, le=20)
     orderType: Optional[Literal['market', 'limit']] = None
     dryRun: Optional[bool] = None
+    takeProfitPercent: Optional[float] = Field(None, ge=1.0, le=30.0)
+    stopLossPercent: Optional[float] = Field(None, ge=-30.0, le=-1.0)
 
 
 class AutoTradeToggleRequest(BaseModel):

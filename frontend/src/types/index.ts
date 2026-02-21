@@ -316,6 +316,8 @@ export interface AutoTradeConfig {
   maxTradesPerDay: number;
   orderType: string;
   dryRun: boolean;
+  takeProfitPercent: number;
+  stopLossPercent: number;
 }
 
 export interface AutoTradeStockSetting {

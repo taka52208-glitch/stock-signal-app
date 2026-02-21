@@ -14,9 +14,11 @@ import type { AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog } from '../ty
 const DEFAULT_CONFIG: AutoTradeConfig = {
   enabled: false,
   minSignalStrength: 2,
-  maxTradesPerDay: 3,
+  maxTradesPerDay: 5,
   orderType: 'market',
   dryRun: true,
+  takeProfitPercent: 5.0,
+  stopLossPercent: -3.0,
 };
 
 const STATUS_LABELS: Record<string, { label: string; color: 'success' | 'error' | 'warning' | 'default' }> = {
@@ -322,7 +324,7 @@ export default function AutoTradeSettings() {
             />
           </Box>
 
-          <Box>
+          <Box mb={3}>
             <Typography variant="body2" color="text.secondary" gutterBottom>
               注文タイプ
             </Typography>
@@ -335,6 +337,57 @@ export default function AutoTradeSettings() {
               <ToggleButton value="market">成行</ToggleButton>
               <ToggleButton value="limit">指値</ToggleButton>
             </ToggleButtonGroup>
+          </Box>
+
+          <Divider sx={{ mb: 2 }} />
+          <Typography variant="subtitle2" fontWeight="bold" mb={2}>
+            自動利確・損切り
+          </Typography>
+
+          <Box mb={3}>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              利確閾値: +{config.takeProfitPercent}%
+            </Typography>
+            <Slider
+              value={config.takeProfitPercent}
+              onChange={(_, v) => setConfig(prev => ({ ...prev, takeProfitPercent: v as number }))}
+              min={1}
+              max={20}
+              step={0.5}
+              marks={[
+                { value: 3, label: '3%' },
+                { value: 5, label: '5%' },
+                { value: 10, label: '10%' },
+                { value: 15, label: '15%' },
+                { value: 20, label: '20%' },
+              ]}
+              valueLabelDisplay="auto"
+              valueLabelFormat={(v) => `+${v}%`}
+              color="success"
+            />
+          </Box>
+
+          <Box>
+            <Typography variant="body2" color="text.secondary" gutterBottom>
+              損切り閾値: {config.stopLossPercent}%
+            </Typography>
+            <Slider
+              value={config.stopLossPercent}
+              onChange={(_, v) => setConfig(prev => ({ ...prev, stopLossPercent: v as number }))}
+              min={-20}
+              max={-1}
+              step={0.5}
+              marks={[
+                { value: -20, label: '-20%' },
+                { value: -10, label: '-10%' },
+                { value: -5, label: '-5%' },
+                { value: -3, label: '-3%' },
+                { value: -1, label: '-1%' },
+              ]}
+              valueLabelDisplay="auto"
+              valueLabelFormat={(v) => `${v}%`}
+              color="error"
+            />
           </Box>
         </CardContent>
       </Card>

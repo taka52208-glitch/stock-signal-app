@@ -15,10 +15,12 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
     'enabled': 'false',
-    'minSignalStrength': '3',
-    'maxTradesPerDay': '2',
+    'minSignalStrength': '2',
+    'maxTradesPerDay': '5',
     'orderType': 'market',
     'dryRun': 'true',
+    'takeProfitPercent': '5.0',
+    'stopLossPercent': '-3.0',
 }
 
 
@@ -43,6 +45,8 @@ class AutoTradeService:
             'maxTradesPerDay': int(result['maxTradesPerDay']),
             'orderType': result['orderType'],
             'dryRun': result['dryRun'] == 'true',
+            'takeProfitPercent': float(result['takeProfitPercent']),
+            'stopLossPercent': float(result['stopLossPercent']),
         }
 
     def update_config(self, data: dict) -> dict:
@@ -53,6 +57,8 @@ class AutoTradeService:
             'maxTradesPerDay': str,
             'orderType': str,
             'dryRun': lambda v: str(v).lower(),
+            'takeProfitPercent': str,
+            'stopLossPercent': str,
         }
         for key, value in data.items():
             if key not in key_map:
@@ -235,13 +241,20 @@ class AutoTradeService:
         self.db.commit()
         return log
 
-    def _get_today_trade_count(self) -> int:
+    def _get_today_trade_count(self, dry_run: bool = False) -> int:
         """本日の実行済み取引数"""
         today = date.today()
-        return self.db.query(AutoTradeLog).filter(
+        query = self.db.query(AutoTradeLog).filter(
             sql_func.date(AutoTradeLog.created_at) == today,
-            AutoTradeLog.executed == True,
-        ).count()
+        )
+        if dry_run:
+            query = query.filter(
+                AutoTradeLog.dry_run == True,
+                AutoTradeLog.result_status == 'success',
+            )
+        else:
+            query = query.filter(AutoTradeLog.executed == True)
+        return query.count()
 
     def _get_holding_quantity(self, code: str) -> int:
         """保有数量を計算"""
@@ -269,6 +282,50 @@ class AutoTradeService:
                 if qty > 0:
                     avg = total_cost / qty
                     sell_qty = min(t.quantity, qty)
+                    qty -= sell_qty
+                    total_cost -= sell_qty * avg
+        return (total_cost / qty) if qty > 0 else None
+
+    def _get_dry_run_holding_quantity(self, code: str) -> int:
+        """ドライランの仮想保有数量を計算（auto_trade_logから）"""
+        logs = self.db.execute(text('''
+            SELECT DISTINCT ON (code, signal_type, DATE_TRUNC('hour', created_at))
+                signal_type, quantity
+            FROM auto_trade_log
+            WHERE code = :code AND result_status = 'success' AND dry_run = true
+            ORDER BY code, signal_type, DATE_TRUNC('hour', created_at), created_at
+        '''), {'code': code}).fetchall()
+        qty = 0
+        for sig, q in logs:
+            if not q:
+                continue
+            if sig == 'buy':
+                qty += q
+            else:
+                qty -= q
+        return max(qty, 0)
+
+    def _get_dry_run_entry_price(self, code: str) -> float | None:
+        """ドライランの仮想平均取得単価を計算（auto_trade_logから）"""
+        logs = self.db.execute(text('''
+            SELECT DISTINCT ON (code, signal_type, DATE_TRUNC('hour', created_at))
+                signal_type, order_price, quantity
+            FROM auto_trade_log
+            WHERE code = :code AND result_status = 'success' AND dry_run = true
+            ORDER BY code, signal_type, DATE_TRUNC('hour', created_at), created_at
+        '''), {'code': code}).fetchall()
+        qty = 0
+        total_cost = 0.0
+        for sig, price, q in logs:
+            if not q or not price:
+                continue
+            if sig == 'buy':
+                qty += q
+                total_cost += float(price) * q
+            else:
+                if qty > 0:
+                    avg = total_cost / qty
+                    sell_qty = min(q, qty)
                     qty -= sell_qty
                     total_cost -= sell_qty * avg
         return (total_cost / qty) if qty > 0 else None
@@ -326,7 +383,7 @@ class AutoTradeService:
             return
 
         # 2. 日次上限チェック
-        today_count = self._get_today_trade_count()
+        today_count = self._get_today_trade_count(dry_run=config['dryRun'])
         if today_count >= config['maxTradesPerDay']:
             logger.info(f"[auto-trade] Daily limit reached ({today_count}/{config['maxTradesPerDay']})")
             self._add_log(
@@ -397,20 +454,101 @@ class AutoTradeService:
                 continue
             current_price = latest_price.close
 
-            # a.2 holdシグナル → 利益確保チェック（ログのみ）
+            # a.2 holdシグナル → 自動利確・損切りチェック
             if latest_signal.signal_type == 'hold':
-                msg = 'holdシグナル（様子見）'
-                entry_price = self._get_entry_price(code)
-                if entry_price and current_price > 0:
+                if config['dryRun']:
+                    entry_price = self._get_dry_run_entry_price(code)
+                    hold_qty = self._get_dry_run_holding_quantity(code)
+                else:
+                    entry_price = self._get_entry_price(code)
+                    hold_qty = self._get_holding_quantity(code)
+
+                take_profit_pct = config['takeProfitPercent']
+                stop_loss_pct = config['stopLossPercent']
+                sell_reason = None
+
+                if entry_price and current_price > 0 and hold_qty > 0:
                     gain_pct = ((current_price - entry_price) / entry_price) * 100
-                    if gain_pct >= 5.0:
+
+                    # 大幅利益 → 無条件利確
+                    if gain_pct >= take_profit_pct * 1.5:
+                        sell_reason = f'自動利確（含み益 {gain_pct:.1f}% >= {take_profit_pct * 1.5:.1f}%）'
+                    # 利確閾値超え + 直近下落 → 利確
+                    elif gain_pct >= take_profit_pct:
                         recent_2 = self.db.query(StockPrice).filter(
                             StockPrice.code == code
                         ).order_by(StockPrice.date.desc()).limit(2).all()
                         if len(recent_2) == 2 and recent_2[0].close < recent_2[1].close:
-                            msg = f'holdだが利益確保売却推奨（含み益 {gain_pct:.1f}%, 直近下落中）'
+                            sell_reason = f'自動利確（含み益 {gain_pct:.1f}%, 直近下落中）'
+                    # 損切り
+                    elif gain_pct <= stop_loss_pct:
+                        sell_reason = f'自動損切り（含み損 {gain_pct:.1f}% <= {stop_loss_pct:.1f}%）'
+
+                if sell_reason and hold_qty > 0:
+                    # 利確・損切り売り実行
+                    if config['dryRun']:
+                        self._add_log(
+                            code=code,
+                            signal_type='sell',
+                            signal_strength=latest_signal.signal_strength or 0,
+                            active_signals=latest_signal.active_signals,
+                            order_type=config['orderType'],
+                            order_price=current_price,
+                            quantity=hold_qty,
+                            risk_passed=True,
+                            executed=False,
+                            dry_run=True,
+                            result_status='success',
+                            result_message=f'[DRY-RUN] {sell_reason}',
+                        )
+                        remaining_trades -= 1
                     else:
-                        msg = f'holdシグナル（含み益 {gain_pct:.1f}%）'
+                        try:
+                            order_result = asyncio.run(
+                                brokerage_service.create_order(
+                                    code=code, order_type=config['orderType'],
+                                    side='sell', quantity=hold_qty,
+                                    price=current_price if config['orderType'] == 'limit' else None,
+                                )
+                            )
+                            transaction = Transaction(
+                                code=code, transaction_type='sell',
+                                quantity=hold_qty, price=current_price,
+                                memo=f'[自動売買] {sell_reason}',
+                            )
+                            self.db.add(transaction)
+                            self.db.commit()
+                            self.db.refresh(transaction)
+                            self._add_log(
+                                code=code, signal_type='sell',
+                                signal_strength=latest_signal.signal_strength or 0,
+                                active_signals=latest_signal.active_signals,
+                                order_type=config['orderType'], order_price=current_price,
+                                quantity=hold_qty, risk_passed=True,
+                                executed=True, dry_run=False,
+                                result_status='success',
+                                result_message=f'{sell_reason} (Order: {order_result.get("brokerageOrderId", "N/A")})',
+                                transaction_id=transaction.id,
+                                brokerage_order_id=order_result.get('brokerageOrderId'),
+                            )
+                            remaining_trades -= 1
+                        except Exception as e:
+                            self._add_log(
+                                code=code, signal_type='sell',
+                                signal_strength=latest_signal.signal_strength or 0,
+                                active_signals=latest_signal.active_signals,
+                                order_price=current_price, quantity=hold_qty,
+                                executed=False, dry_run=False,
+                                result_status='failed',
+                                result_message=f'{sell_reason} 注文失敗: {str(e)}',
+                            )
+                    continue
+
+                # 利確・損切り対象外 → ログのみ
+                msg = 'holdシグナル（様子見）'
+                if entry_price and current_price > 0 and hold_qty > 0:
+                    gain_pct = ((current_price - entry_price) / entry_price) * 100
+                    msg = f'holdシグナル（含み益 {gain_pct:.1f}%）'
                 self._add_log(
                     code=code,
                     signal_type='hold',
@@ -455,7 +593,10 @@ class AutoTradeService:
                     )
                     continue
             else:  # sell
-                quantity = self._get_holding_quantity(code)
+                if config['dryRun']:
+                    quantity = self._get_dry_run_holding_quantity(code)
+                else:
+                    quantity = self._get_holding_quantity(code)
                 if quantity <= 0:
                     self._add_log(
                         code=code,
@@ -580,4 +721,4 @@ class AutoTradeService:
                     result_message=f'注文送信失敗: {str(e)}',
                 )
 
-        logger.info(f"[auto-trade] Processing complete. Trades today: {self._get_today_trade_count()}")
+        logger.info(f"[auto-trade] Processing complete. Trades today: {self._get_today_trade_count(dry_run=config['dryRun'])}")
