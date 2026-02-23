@@ -8,7 +8,7 @@ load_dotenv('.env.local')
 class Settings(BaseSettings):
     database_url: str = os.getenv('DATABASE_URL', '') or 'sqlite:///./stock.db'
     cors_origins: str = os.getenv('CORS_ORIGINS', '') or 'http://localhost:3847'
-    mock_mode: bool = os.getenv('MOCK_MODE', 'true').lower() == 'true'
+    mock_mode: bool = os.getenv('MOCK_MODE', 'false').lower() == 'true'
 
     # シグナル判定デフォルト値
     rsi_buy_threshold: int = 35
