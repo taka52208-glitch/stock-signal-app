@@ -14,8 +14,8 @@ from src.services.stock_service import StockService
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
-    'enabled': 'false',
-    'minSignalStrength': '2',
+    'enabled': 'true',
+    'minSignalStrength': '1',
     'maxTradesPerDay': '5',
     'orderType': 'market',
     'dryRun': 'true',
