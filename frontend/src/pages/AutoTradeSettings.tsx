@@ -12,8 +12,8 @@ import { api } from '../api/client';
 import type { AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog } from '../types';
 
 const DEFAULT_CONFIG: AutoTradeConfig = {
-  enabled: false,
-  minSignalStrength: 2,
+  enabled: true,
+  minSignalStrength: 1,
   maxTradesPerDay: 5,
   orderType: 'market',
   dryRun: true,
