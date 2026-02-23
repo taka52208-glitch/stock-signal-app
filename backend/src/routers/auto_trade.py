@@ -5,7 +5,7 @@ from src.models.schemas import (
     AutoTradeConfigResponse, AutoTradeConfigUpdateRequest,
     AutoTradeToggleRequest, AutoTradeStockSettingResponse,
     AutoTradeStockUpdateRequest, AutoTradeLogResponse,
-    VirtualPortfolioResponse,
+    VirtualPortfolioResponse, MessageResponse,
 )
 from src.services.auto_trade_service import AutoTradeService
 
@@ -41,6 +41,21 @@ def get_log(limit: int = 50, db: Session = Depends(get_db)):
 def get_virtual_portfolio(db: Session = Depends(get_db)):
     service = AutoTradeService(db)
     return service.get_virtual_portfolio()
+
+
+@router.post('/run', response_model=MessageResponse)
+def run_now(db: Session = Depends(get_db)):
+    """手動で自動売買処理を1回実行（ロックをバイパス）"""
+    service = AutoTradeService(db)
+    service._cleanup_old_locks()
+    # 現在時間のロックを削除してから実行
+    from sqlalchemy import text
+    from datetime import datetime
+    lock_key = f"auto_trade_lock_{datetime.now().strftime('%Y%m%d_%H')}"
+    db.execute(text("DELETE FROM auto_trade_config WHERE key = :key"), {'key': lock_key})
+    db.commit()
+    service.process_auto_trades()
+    return {'message': '手動実行完了'}
 
 
 @router.get('/stocks', response_model=list[AutoTradeStockSettingResponse])
