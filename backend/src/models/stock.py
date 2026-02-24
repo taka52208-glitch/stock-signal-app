@@ -45,6 +45,12 @@ class Signal(Base):
     stop_loss_price = Column(Float, nullable=True)
     support_price = Column(Float, nullable=True)
     resistance_price = Column(Float, nullable=True)
+    bb_upper = Column(Float, nullable=True)       # ボリンジャーバンド上限
+    bb_lower = Column(Float, nullable=True)       # ボリンジャーバンド下限
+    bb_middle = Column(Float, nullable=True)      # ボリンジャーバンド中央(SMA20)
+    atr = Column(Float, nullable=True)            # ATR(14)
+    volume_ratio = Column(Float, nullable=True)   # 出来高 / 20日平均出来高
+    signal_score = Column(Float, nullable=True)   # 加重スコア (0.0-5.0)
 
 
 class Setting(Base):

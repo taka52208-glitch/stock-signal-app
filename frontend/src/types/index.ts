@@ -28,6 +28,12 @@ export interface StockDetail extends Stock {
   stopLossPrice: number | null;
   supportPrice: number | null;
   resistancePrice: number | null;
+  bbUpper: number | null;
+  bbLower: number | null;
+  bbMiddle: number | null;
+  atr: number | null;
+  volumeRatio: number | null;
+  signalScore: number | null;
 }
 
 // チャートデータ
@@ -41,6 +47,8 @@ export interface ChartData {
   sma5?: number;
   sma25?: number;
   sma75?: number;
+  bbUpper?: number;
+  bbLower?: number;
 }
 
 // 設定

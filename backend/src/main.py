@@ -108,6 +108,12 @@ async def lifespan(app: FastAPI):
         ("stop_loss_price", "FLOAT"),
         ("support_price", "FLOAT"),
         ("resistance_price", "FLOAT"),
+        ("bb_upper", "FLOAT"),
+        ("bb_lower", "FLOAT"),
+        ("bb_middle", "FLOAT"),
+        ("atr", "FLOAT"),
+        ("volume_ratio", "FLOAT"),
+        ("signal_score", "FLOAT"),
     ]
     with engine.connect() as conn:
         for col_name, col_type in new_columns:

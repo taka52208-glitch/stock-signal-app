@@ -454,7 +454,7 @@ class AutoTradeService:
                 continue
             current_price = latest_price.close
 
-            # a.2 holdシグナル → 自動利確・損切りチェック
+            # a.2 holdシグナル → 自動利確・損切りチェック（ATR動的閾値 + トレーリングストップ）
             if latest_signal.signal_type == 'hold':
                 if config['dryRun']:
                     entry_price = self._get_dry_run_entry_price(code)
@@ -467,22 +467,65 @@ class AutoTradeService:
                 stop_loss_pct = config['stopLossPercent']
                 sell_reason = None
 
+                # ATR値を取得（動的閾値用）
+                sig_atr = latest_signal.atr if hasattr(latest_signal, 'atr') else None
+
                 if entry_price and current_price > 0 and hold_qty > 0:
                     gain_pct = ((current_price - entry_price) / entry_price) * 100
 
-                    # 大幅利益 → 無条件利確
-                    if gain_pct >= take_profit_pct * 1.5:
-                        sell_reason = f'自動利確（含み益 {gain_pct:.1f}% >= {take_profit_pct * 1.5:.1f}%）'
-                    # 利確閾値超え + 直近下落 → 利確
-                    elif gain_pct >= take_profit_pct:
-                        recent_2 = self.db.query(StockPrice).filter(
-                            StockPrice.code == code
-                        ).order_by(StockPrice.date.desc()).limit(2).all()
-                        if len(recent_2) == 2 and recent_2[0].close < recent_2[1].close:
-                            sell_reason = f'自動利確（含み益 {gain_pct:.1f}%, 直近下落中）'
-                    # 損切り
-                    elif gain_pct <= stop_loss_pct:
-                        sell_reason = f'自動損切り（含み損 {gain_pct:.1f}% <= {stop_loss_pct:.1f}%）'
+                    if sig_atr and sig_atr > 0:
+                        # --- ATR動的閾値 + トレーリングストップ ---
+                        atr_take_profit = entry_price + 3 * sig_atr
+                        atr_stop_loss = entry_price - 2 * sig_atr
+                        atr_gain = current_price - entry_price
+                        atr_trailing_threshold = 2 * sig_atr  # 含み益 >= 2*ATR でトレーリング
+                        atr_breakeven_threshold = 1 * sig_atr  # 含み益 >= 1*ATR でブレークイーブン
+
+                        if current_price >= atr_take_profit:
+                            # ATR利確: entry + 3*ATR 到達
+                            sell_reason = (
+                                f'ATR利確（現在値 {current_price:.0f} >= 目標 {atr_take_profit:.0f}, '
+                                f'含み益 {gain_pct:.1f}%）'
+                            )
+                        elif atr_gain >= atr_trailing_threshold:
+                            # トレーリングストップ: 含み益 >= 2*ATR → current - 1*ATR を下回ったら売り
+                            trailing_stop = current_price - sig_atr
+                            recent_prices = self.db.query(StockPrice).filter(
+                                StockPrice.code == code
+                            ).order_by(StockPrice.date.desc()).limit(2).all()
+                            if len(recent_prices) >= 2 and recent_prices[0].low <= trailing_stop:
+                                sell_reason = (
+                                    f'トレーリングストップ（安値 {recent_prices[0].low:.0f} <= '
+                                    f'トレーリング {trailing_stop:.0f}, 含み益 {gain_pct:.1f}%）'
+                                )
+                        elif atr_gain >= atr_breakeven_threshold:
+                            # ブレークイーブンストップ: 含み益 >= 1*ATR → entry価格まで戻ったら売り
+                            if current_price <= entry_price:
+                                sell_reason = (
+                                    f'ブレークイーブンストップ（現在値 {current_price:.0f} <= '
+                                    f'取得単価 {entry_price:.0f}）'
+                                )
+                        elif current_price <= atr_stop_loss:
+                            # ATR損切り: entry - 2*ATR
+                            sell_reason = (
+                                f'ATR損切り（現在値 {current_price:.0f} <= 損切り {atr_stop_loss:.0f}, '
+                                f'含み損 {gain_pct:.1f}%）'
+                            )
+                    else:
+                        # --- フォールバック: 従来の固定%ロジック ---
+                        # 大幅利益 → 無条件利確
+                        if gain_pct >= take_profit_pct * 1.5:
+                            sell_reason = f'自動利確（含み益 {gain_pct:.1f}% >= {take_profit_pct * 1.5:.1f}%）'
+                        # 利確閾値超え + 直近下落 → 利確
+                        elif gain_pct >= take_profit_pct:
+                            recent_2 = self.db.query(StockPrice).filter(
+                                StockPrice.code == code
+                            ).order_by(StockPrice.date.desc()).limit(2).all()
+                            if len(recent_2) == 2 and recent_2[0].close < recent_2[1].close:
+                                sell_reason = f'自動利確（含み益 {gain_pct:.1f}%, 直近下落中）'
+                        # 損切り
+                        elif gain_pct <= stop_loss_pct:
+                            sell_reason = f'自動損切り（含み損 {gain_pct:.1f}% <= {stop_loss_pct:.1f}%）'
 
                 if sell_reason and hold_qty > 0:
                     # 利確・損切り売り実行

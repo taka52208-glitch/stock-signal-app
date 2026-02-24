@@ -174,15 +174,32 @@ class StockService:
         df['sma25'] = ta.sma(df['close'], length=settings['smaMidPeriod'])
         df['sma75'] = ta.sma(df['close'], length=settings['smaLongPeriod'])
 
+        # ボリンジャーバンド (20日, 2σ)
+        bbands = ta.bbands(df['close'], length=20, std=2)
+        if bbands is not None:
+            df['bb_lower'] = bbands.iloc[:, 0]
+            df['bb_middle'] = bbands.iloc[:, 1]
+            df['bb_upper'] = bbands.iloc[:, 2]
+
+        # ATR (14日)
+        if 'high' in df.columns and 'low' in df.columns:
+            df['atr'] = ta.atr(df['high'], df['low'], df['close'], length=14)
+
+        # 出来高比率 (当日出来高 / 20日平均出来高)
+        if 'volume' in df.columns:
+            vol_sma20 = ta.sma(df['volume'].astype(float), length=20)
+            df['volume_ratio'] = df['volume'].astype(float) / vol_sma20.replace(0, np.nan)
+
         return df
 
     def calculate_signal_details(self, df: pd.DataFrame, settings: dict) -> dict:
-        """シグナル詳細を計算"""
+        """シグナル詳細を計算（加重スコアリング + トレンドフィルター）"""
         if len(df) < 2:
             return {
                 'signal_type': 'hold', 'signal_strength': 0, 'active_signals': [],
                 'target_price': None, 'stop_loss_price': None,
                 'support_price': None, 'resistance_price': None,
+                'signal_score': 0.0,
             }
 
         latest = df.iloc[-1]
@@ -190,72 +207,174 @@ class StockService:
         current_price = latest['close']
 
         rsi = latest.get('rsi')
-        macd = latest.get('macd')
-        macd_signal = latest.get('macd_signal')
+        macd_val = latest.get('macd')
+        macd_sig = latest.get('macd_signal')
         sma_short = latest.get('sma5')
         sma_mid = latest.get('sma25')
+        sma_long = latest.get('sma75')
         prev_sma_short = prev.get('sma5')
         prev_sma_mid = prev.get('sma25')
+        bb_upper = latest.get('bb_upper')
+        bb_lower = latest.get('bb_lower')
+        bb_middle = latest.get('bb_middle')
+        atr = latest.get('atr')
+        volume_ratio = latest.get('volume_ratio')
 
-        # 買いシグナル判定
+        # --- 買いシグナル判定（加重スコア） ---
         buy_signals = []
-        if rsi is not None and rsi <= settings['rsiBuyThreshold']:
+        buy_score = 0.0
+
+        # RSI (重み 1.0)
+        if rsi is not None and not pd.isna(rsi) and rsi <= settings['rsiBuyThreshold']:
             buy_signals.append('RSI')
-        if macd is not None and macd_signal is not None:
-            if prev.get('macd', 0) <= prev.get('macd_signal', 0) and macd > macd_signal:
+            buy_score += 1.0
+
+        # MACD クロスオーバー (重み 1.5)
+        if macd_val is not None and macd_sig is not None:
+            prev_macd = prev.get('macd', 0) or 0
+            prev_sig = prev.get('macd_signal', 0) or 0
+            if prev_macd <= prev_sig and macd_val > macd_sig:
                 buy_signals.append('MACD')
+                buy_score += 1.5
+
+        # ゴールデンクロス (重み 1.0)
         if sma_short is not None and sma_mid is not None:
             if prev_sma_short is not None and prev_sma_mid is not None:
-                if prev_sma_short <= prev_sma_mid and sma_short > sma_mid:
-                    buy_signals.append('GoldenCross')
+                if not pd.isna(prev_sma_short) and not pd.isna(prev_sma_mid):
+                    if prev_sma_short <= prev_sma_mid and sma_short > sma_mid:
+                        buy_signals.append('GoldenCross')
+                        buy_score += 1.0
 
-        # 売りシグナル判定
+        # BB バウンス (重み 0.5): 前日安値がBB下限以下 + 当日終値がBB下限上回り
+        if bb_lower is not None and not pd.isna(bb_lower):
+            prev_low = prev.get('low')
+            if prev_low is not None and not pd.isna(prev_low):
+                if prev_low <= bb_lower and current_price > bb_lower:
+                    buy_signals.append('BB_Bounce')
+                    buy_score += 0.5
+
+        # --- 売りシグナル判定（加重スコア） ---
         sell_signals = []
-        if rsi is not None and rsi >= settings['rsiSellThreshold']:
+        sell_score = 0.0
+
+        # RSI (重み 1.0)
+        if rsi is not None and not pd.isna(rsi) and rsi >= settings['rsiSellThreshold']:
             sell_signals.append('RSI')
-        if macd is not None and macd_signal is not None:
-            if prev.get('macd', 0) >= prev.get('macd_signal', 0) and macd < macd_signal:
+            sell_score += 1.0
+
+        # MACD クロスオーバー (重み 1.5)
+        if macd_val is not None and macd_sig is not None:
+            prev_macd = prev.get('macd', 0) or 0
+            prev_sig = prev.get('macd_signal', 0) or 0
+            if prev_macd >= prev_sig and macd_val < macd_sig:
                 sell_signals.append('MACD')
+                sell_score += 1.5
+
+        # デッドクロス (重み 1.0)
         if sma_short is not None and sma_mid is not None:
             if prev_sma_short is not None and prev_sma_mid is not None:
-                if prev_sma_short >= prev_sma_mid and sma_short < sma_mid:
-                    sell_signals.append('DeadCross')
+                if not pd.isna(prev_sma_short) and not pd.isna(prev_sma_mid):
+                    if prev_sma_short >= prev_sma_mid and sma_short < sma_mid:
+                        sell_signals.append('DeadCross')
+                        sell_score += 1.0
 
-        # 支持線・抵抗線（直近25日の安値・高値）
+        # BB タッチ (重み 0.5): 前日高値がBB上限以上 + 当日終値がBB上限下回り
+        if bb_upper is not None and not pd.isna(bb_upper):
+            prev_high = prev.get('high')
+            if prev_high is not None and not pd.isna(prev_high):
+                if prev_high >= bb_upper and current_price < bb_upper:
+                    sell_signals.append('BB_Touch')
+                    sell_score += 0.5
+
+        # --- トレンドフィルター（最重要改善） ---
+        has_trend_data = sma_long is not None and not pd.isna(sma_long)
+        if has_trend_data:
+            if current_price < sma_long:
+                # 下降トレンド → 買いシグナル全て抑制
+                buy_signals = []
+                buy_score = 0.0
+            elif current_price > sma_long:
+                # 上昇トレンド → 売りシグナル全て抑制
+                sell_signals = []
+                sell_score = 0.0
+
+        # --- 出来高確認 (重み 0.5) ---
+        # 他シグナルが存在する場合のみ加点（単独ではシグナルにならない）
+        has_vol_confirm = (
+            volume_ratio is not None and not pd.isna(volume_ratio) and volume_ratio >= 1.5
+        )
+        if has_vol_confirm:
+            if buy_signals:
+                buy_signals.append('VolConfirm')
+                buy_score += 0.5
+            if sell_signals:
+                sell_signals.append('VolConfirm')
+                sell_score += 0.5
+
+        # --- トレンド整合 (重み 0.5) ---
+        if has_trend_data:
+            if buy_signals and current_price > sma_long:
+                buy_signals.append('TrendAlign')
+                buy_score += 0.5
+            if sell_signals and current_price < sma_long:
+                sell_signals.append('TrendAlign')
+                sell_score += 0.5
+
+        # --- 支持線・抵抗線（直近25日の安値・高値） ---
         recent = df.tail(25)
         support_price = float(recent['low'].min())
         resistance_price = float(recent['high'].max())
 
-        if buy_signals:
+        # --- シグナル判定 + スコアマッピング ---
+        if buy_score > sell_score and buy_signals:
             signal_type = 'buy'
             active = buy_signals
-            sma75 = latest.get('sma75')
-            # 目標価格: 抵抗線、SMA75、現在値+10%のうち最も高いもの
-            candidates = [resistance_price]
-            if sma75 is not None and not pd.isna(sma75) and sma75 > current_price:
-                candidates.append(float(sma75))
-            candidates.append(current_price * 1.10)
-            target_price = max(candidates)
-            stop_loss_price = max(support_price, current_price * 0.95)
-        elif sell_signals:
+            signal_score = buy_score
+
+            # ATR ベース目標価格/損切り
+            if atr is not None and not pd.isna(atr) and atr > 0:
+                target_price = current_price + 3 * atr
+                stop_loss_price = current_price - 2 * atr
+            else:
+                # フォールバック: 従来ロジック
+                candidates = [resistance_price]
+                if sma_long is not None and not pd.isna(sma_long) and sma_long > current_price:
+                    candidates.append(float(sma_long))
+                candidates.append(current_price * 1.10)
+                target_price = max(candidates)
+                stop_loss_price = max(support_price, current_price * 0.95)
+        elif sell_score > buy_score and sell_signals:
             signal_type = 'sell'
             active = sell_signals
+            signal_score = sell_score
             target_price = support_price
             stop_loss_price = resistance_price
         else:
             signal_type = 'hold'
             active = []
+            signal_score = 0.0
             target_price = None
             stop_loss_price = None
 
+        # signal_score → signal_strength マッピング: <1.5→1, <3.0→2, >=3.0→3
+        if signal_score >= 3.0:
+            signal_strength = 3
+        elif signal_score >= 1.5:
+            signal_strength = 2
+        elif signal_score > 0:
+            signal_strength = 1
+        else:
+            signal_strength = 0
+
         return {
             'signal_type': signal_type,
-            'signal_strength': len(active),
+            'signal_strength': signal_strength,
             'active_signals': active,
             'target_price': round(target_price, 1) if target_price else None,
             'stop_loss_price': round(stop_loss_price, 1) if stop_loss_price else None,
             'support_price': round(support_price, 1),
             'resistance_price': round(resistance_price, 1),
+            'signal_score': round(signal_score, 2),
         }
 
     def determine_signal(self, df: pd.DataFrame, settings: dict) -> Literal['buy', 'sell', 'hold']:
@@ -325,23 +444,40 @@ class StockService:
         # シグナル保存
         details = self.calculate_signal_details(df, settings)
         self.db.query(Signal).filter(Signal.code == code, Signal.date == today).delete()
+
+        def _safe_float(val):
+            """NaN/None安全なfloat変換"""
+            if val is None:
+                return None
+            try:
+                f = float(val)
+                return None if pd.isna(f) else f
+            except (ValueError, TypeError):
+                return None
+
         signal = Signal(
             code=code,
             date=today,
             signal_type=details['signal_type'],
-            rsi=latest.get('rsi'),
-            macd=latest.get('macd'),
-            macd_signal=latest.get('macd_signal'),
-            macd_histogram=latest.get('macd_histogram'),
-            sma5=latest.get('sma5'),
-            sma25=latest.get('sma25'),
-            sma75=latest.get('sma75'),
+            rsi=_safe_float(latest.get('rsi')),
+            macd=_safe_float(latest.get('macd')),
+            macd_signal=_safe_float(latest.get('macd_signal')),
+            macd_histogram=_safe_float(latest.get('macd_histogram')),
+            sma5=_safe_float(latest.get('sma5')),
+            sma25=_safe_float(latest.get('sma25')),
+            sma75=_safe_float(latest.get('sma75')),
             signal_strength=details['signal_strength'],
             active_signals=','.join(details['active_signals']) if details['active_signals'] else None,
             target_price=details['target_price'],
             stop_loss_price=details['stop_loss_price'],
             support_price=details['support_price'],
             resistance_price=details['resistance_price'],
+            bb_upper=_safe_float(latest.get('bb_upper')),
+            bb_lower=_safe_float(latest.get('bb_lower')),
+            bb_middle=_safe_float(latest.get('bb_middle')),
+            atr=_safe_float(latest.get('atr')),
+            volume_ratio=_safe_float(latest.get('volume_ratio')),
+            signal_score=details.get('signal_score'),
         )
         self.db.add(signal)
         self.db.commit()
@@ -435,6 +571,12 @@ class StockService:
             'stopLossPrice': latest_signal.stop_loss_price if latest_signal else None,
             'supportPrice': latest_signal.support_price if latest_signal else None,
             'resistancePrice': latest_signal.resistance_price if latest_signal else None,
+            'bbUpper': round(latest_signal.bb_upper, 1) if latest_signal and latest_signal.bb_upper else None,
+            'bbLower': round(latest_signal.bb_lower, 1) if latest_signal and latest_signal.bb_lower else None,
+            'bbMiddle': round(latest_signal.bb_middle, 1) if latest_signal and latest_signal.bb_middle else None,
+            'atr': round(latest_signal.atr, 1) if latest_signal and latest_signal.atr else None,
+            'volumeRatio': round(latest_signal.volume_ratio, 2) if latest_signal and latest_signal.volume_ratio else None,
+            'signalScore': round(latest_signal.signal_score, 2) if latest_signal and latest_signal.signal_score else None,
             'updatedAt': latest_price.date.isoformat() if latest_price else ''
         }
 
@@ -471,6 +613,13 @@ class StockService:
         if len(df) >= settings['smaLongPeriod']:
             df['sma75'] = ta.sma(df['close'], length=settings['smaLongPeriod'])
 
+        # ボリンジャーバンド (20日, 2σ)
+        if len(df) >= 20:
+            bbands = ta.bbands(df['close'], length=20, std=2)
+            if bbands is not None:
+                df['bb_lower'] = bbands.iloc[:, 0]
+                df['bb_upper'] = bbands.iloc[:, 2]
+
         result = []
         for _, row in df.iterrows():
             result.append({
@@ -483,6 +632,8 @@ class StockService:
                 'sma5': round(row['sma5'], 0) if pd.notna(row.get('sma5')) else None,
                 'sma25': round(row['sma25'], 0) if pd.notna(row.get('sma25')) else None,
                 'sma75': round(row['sma75'], 0) if pd.notna(row.get('sma75')) else None,
+                'bbUpper': round(row['bb_upper'], 0) if pd.notna(row.get('bb_upper')) else None,
+                'bbLower': round(row['bb_lower'], 0) if pd.notna(row.get('bb_lower')) else None,
             })
         return result
 
