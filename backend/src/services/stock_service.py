@@ -225,25 +225,48 @@ class StockService:
         buy_score = 0.0
 
         # RSI (重み 1.0)
+        prev_rsi = prev.get('rsi')
         if rsi is not None and not pd.isna(rsi) and rsi <= settings['rsiBuyThreshold']:
             buy_signals.append('RSI')
             buy_score += 1.0
+        # RSI モメンタムゾーン (重み 0.5): RSI 35-45 かつ上昇中
+        elif (rsi is not None and not pd.isna(rsi) and 35 <= rsi <= 45
+              and prev_rsi is not None and not pd.isna(prev_rsi) and rsi > prev_rsi):
+            buy_signals.append('RSI_Rising')
+            buy_score += 0.5
 
-        # MACD クロスオーバー (重み 1.5)
+        # MACD クロスオーバー (重み 1.5) / ヒストグラム反転 (重み 0.8, 排他)
+        macd_histogram = latest.get('macd_histogram')
+        prev_histogram = prev.get('macd_histogram')
         if macd_val is not None and macd_sig is not None:
             prev_macd = prev.get('macd', 0) or 0
             prev_sig = prev.get('macd_signal', 0) or 0
             if prev_macd <= prev_sig and macd_val > macd_sig:
                 buy_signals.append('MACD')
                 buy_score += 1.5
+            elif (macd_histogram is not None and prev_histogram is not None
+                  and not pd.isna(macd_histogram) and not pd.isna(prev_histogram)
+                  and prev_histogram <= 0 and macd_histogram > 0):
+                buy_signals.append('MACD_Hist')
+                buy_score += 0.8
 
-        # ゴールデンクロス (重み 1.0)
+        # ゴールデンクロス (重み 1.0) / 価格-MA25クロス (重み 0.5, 排他)
+        has_golden_cross = False
         if sma_short is not None and sma_mid is not None:
             if prev_sma_short is not None and prev_sma_mid is not None:
                 if not pd.isna(prev_sma_short) and not pd.isna(prev_sma_mid):
                     if prev_sma_short <= prev_sma_mid and sma_short > sma_mid:
                         buy_signals.append('GoldenCross')
                         buy_score += 1.0
+                        has_golden_cross = True
+
+        # 価格-MA25クロス (重み 0.5): GoldenCrossと排他
+        if not has_golden_cross and sma_mid is not None and not pd.isna(sma_mid):
+            prev_close = prev.get('close')
+            if prev_close is not None and not pd.isna(prev_close):
+                if prev_close <= sma_mid and current_price > sma_mid:
+                    buy_signals.append('PriceAboveMA25')
+                    buy_score += 0.5
 
         # BB バウンス (重み 0.5): 前日安値がBB下限以下 + 当日終値がBB下限上回り
         if bb_lower is not None and not pd.isna(bb_lower):
@@ -261,22 +284,42 @@ class StockService:
         if rsi is not None and not pd.isna(rsi) and rsi >= settings['rsiSellThreshold']:
             sell_signals.append('RSI')
             sell_score += 1.0
+        # RSI モメンタムゾーン (重み 0.5): RSI 55-65 かつ下落中
+        elif (rsi is not None and not pd.isna(rsi) and 55 <= rsi <= 65
+              and prev_rsi is not None and not pd.isna(prev_rsi) and rsi < prev_rsi):
+            sell_signals.append('RSI_Falling')
+            sell_score += 0.5
 
-        # MACD クロスオーバー (重み 1.5)
+        # MACD クロスオーバー (重み 1.5) / ヒストグラム反転 (重み 0.8, 排他)
         if macd_val is not None and macd_sig is not None:
             prev_macd = prev.get('macd', 0) or 0
             prev_sig = prev.get('macd_signal', 0) or 0
             if prev_macd >= prev_sig and macd_val < macd_sig:
                 sell_signals.append('MACD')
                 sell_score += 1.5
+            elif (macd_histogram is not None and prev_histogram is not None
+                  and not pd.isna(macd_histogram) and not pd.isna(prev_histogram)
+                  and prev_histogram >= 0 and macd_histogram < 0):
+                sell_signals.append('MACD_Hist')
+                sell_score += 0.8
 
-        # デッドクロス (重み 1.0)
+        # デッドクロス (重み 1.0) / 価格-MA25クロス (重み 0.5, 排他)
+        has_dead_cross = False
         if sma_short is not None and sma_mid is not None:
             if prev_sma_short is not None and prev_sma_mid is not None:
                 if not pd.isna(prev_sma_short) and not pd.isna(prev_sma_mid):
                     if prev_sma_short >= prev_sma_mid and sma_short < sma_mid:
                         sell_signals.append('DeadCross')
                         sell_score += 1.0
+                        has_dead_cross = True
+
+        # 価格-MA25クロス (重み 0.5): DeadCrossと排他
+        if not has_dead_cross and sma_mid is not None and not pd.isna(sma_mid):
+            prev_close = prev.get('close')
+            if prev_close is not None and not pd.isna(prev_close):
+                if prev_close >= sma_mid and current_price < sma_mid:
+                    sell_signals.append('PriceBelowMA25')
+                    sell_score += 0.5
 
         # BB タッチ (重み 0.5): 前日高値がBB上限以上 + 当日終値がBB上限下回り
         if bb_upper is not None and not pd.isna(bb_upper):
@@ -286,17 +329,18 @@ class StockService:
                     sell_signals.append('BB_Touch')
                     sell_score += 0.5
 
-        # --- トレンドフィルター（最重要改善） ---
+        # --- トレンドフィルター（ペナルティ方式） ---
+        TREND_PENALTY = 0.3
         has_trend_data = sma_long is not None and not pd.isna(sma_long)
         if has_trend_data:
-            if current_price < sma_long:
-                # 下降トレンド → 買いシグナル全て抑制
-                buy_signals = []
-                buy_score = 0.0
-            elif current_price > sma_long:
-                # 上昇トレンド → 売りシグナル全て抑制
-                sell_signals = []
-                sell_score = 0.0
+            if current_price < sma_long and buy_signals:
+                # 下降トレンド → 買いスコアにペナルティ
+                buy_score *= TREND_PENALTY
+                buy_signals.append('CounterTrend')
+            elif current_price > sma_long and sell_signals:
+                # 上昇トレンド → 売りスコアにペナルティ
+                sell_score *= TREND_PENALTY
+                sell_signals.append('CounterTrend')
 
         # --- 出来高確認 (重み 0.5) ---
         # 他シグナルが存在する場合のみ加点（単独ではシグナルにならない）

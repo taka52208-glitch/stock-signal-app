@@ -6,8 +6,15 @@ import SignalStrengthDisplay from './SignalStrengthDisplay';
 
 const SIGNAL_LABEL: Record<string, string> = {
   RSI: 'RSI売られすぎ',
+  RSI_Rising: 'RSI上昇中',
   MACD: 'MACDクロス',
+  MACD_Hist: 'MACDヒストグラム',
   GoldenCross: 'ゴールデンクロス',
+  PriceAboveMA25: '25日線突破',
+  BB_Bounce: 'BBバウンス',
+  CounterTrend: '逆トレンド',
+  VolConfirm: '出来高確認',
+  TrendAlign: 'トレンド整合',
 };
 
 interface Props {

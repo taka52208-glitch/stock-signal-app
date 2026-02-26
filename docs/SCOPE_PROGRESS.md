@@ -18,6 +18,7 @@
 - [x] Phase 14: ドライラン収支表示（実現/含み損益）
 - [x] Phase 15: 自動売買安定化・本番環境バグ修正
 - [x] Phase 16: シグナルロジック強化（収益性向上）
+- [x] Phase 17: シグナル取引頻度改善
 
 ---
 
@@ -129,7 +130,7 @@
 - [x] データベースモデル（Stock, StockPrice, Signal, Setting, Transaction, Alert, AlertHistory, RiskRule, Backtest, BacktestTrade, BacktestSnapshot, BrokerageConfig, BrokerageOrder, AutoTradeConfig, AutoTradeStock, AutoTradeLog）
 - [x] 株価取得サービス（yfinance + モックモード対応）
 - [x] テクニカル指標計算（RSI, MACD, SMA, BB, ATR, 出来高比率）
-- [x] シグナル判定ロジック（加重スコアリング・トレンドフィルター・BB/出来高確認付き）
+- [x] シグナル判定ロジック（加重スコアリング・トレンドペナルティ・BB/出来高確認・RSIモメンタム・MACDヒストグラム・価格MA25クロス付き）
 - [x] シグナル詳細計算（強度・目標価格・ATR動的損切り・支持線/抵抗線）
 - [x] おすすめ銘柄ロジック（投資予算配分・購入株数・期待利益計算）
 - [x] アラートサービス（価格・シグナル・RSI条件監視）
@@ -141,7 +142,7 @@
 - [x] CORS設定（Vercelサブドメイン正規表現対応）
 - [x] グレースフルシャットダウン（SIGTERM対応）
 - [ ] Rate Limit（未実装）
-- [x] 簡易マイグレーション（起動時ALTER TABLEによる列追加）
+- [x] 簡易マイグレーション（起動時ALTER TABLEによる列追加・エラーログ・検証付き）
 - [ ] データベースマイグレーション（Alembic未導入、`create_all`+ALTER TABLEで代用）
 
 ### インフラ・デプロイ
@@ -203,3 +204,24 @@
 - 出来高確認で低確信度エントリー排除
 - ATR動的損切りでボラティリティに応じた適応的リスク管理
 - トレーリングストップで勝ちトレードの利益最大化
+
+---
+
+## Phase 17: シグナル取引頻度改善（2026-02-25）
+
+### 背景
+- 直近5日間のシグナル分布が hold=77.5%, buy=10%, sell=12.5% と取引シグナルが極端に少ない
+- 主原因: トレンドフィルターによるシグナル全消去、クロスオーバー系の厳しすぎる条件
+
+### 対応内容
+1. **トレンドフィルター緩和**: シグナル全消去 → スコア×0.3ペナルティ乗算 + `CounterTrend`タグ付与。逆トレンドでもRSI+MACD複合なら strength=1 で検出可能に
+2. **RSIモメンタムゾーン追加**: RSI 35-45かつ上昇中→`RSI_Rising`(0.5)、RSI 55-65かつ下落中→`RSI_Falling`(0.5)。従来のRSI≤30/≥70に加え中間域の方向性も検出
+3. **MACDヒストグラム反転追加**: ヒストグラム負→正→`MACD_Hist`(0.8)、正→負→`MACD_Hist`(0.8)。MACDクロスと排他で重複加点なし
+4. **価格-MA25クロス追加**: 終値がSMA25を上抜け→`PriceAboveMA25`(0.5)、下抜け→`PriceBelowMA25`(0.5)。GoldenCross/DeadCrossと排他
+5. **DBマイグレーション**: active_signals列幅 VARCHAR(100)→VARCHAR(200) に拡張
+6. **フロントエンドシグナルラベル**: BuyRecommendationCard/SellRecommendationCardに全10種のシグナルラベルを追加
+7. **マイグレーション堅牢化**: `except: pass`廃止→エラー種別判定・ログ出力・rollback追加。起動時に必須列の存在を検証しCRITICALログ出力
+
+### 初回実行結果（2/25）
+- buy: 2銘柄 (6098 RSI, 7741 MACD)、sell: 2銘柄 (8058 RSI, 6273 RSI)、hold: 16銘柄
+- 新シグナル（RSI_Rising, MACD_Hist, PriceAboveMA25等）は当日の市場状況では未発火。数日間の運用で効果検証予定

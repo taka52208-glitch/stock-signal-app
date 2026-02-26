@@ -3,6 +3,8 @@ import signal
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, time, date
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -20,7 +22,25 @@ from src.services.stock_service import StockService
 from src.services.alert_service import AlertService
 from src.services.auto_trade_service import AutoTradeService
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
+# ロギング設定: stdout + ファイル（日次ローテーション30日保持）
+_log_fmt = logging.Formatter('%(asctime)s [%(levelname)s] %(message)s')
+
+_log_dir = Path(__file__).resolve().parent.parent / "logs"
+_log_dir.mkdir(exist_ok=True)
+
+_stream_handler = logging.StreamHandler(sys.stdout)
+_stream_handler.setFormatter(_log_fmt)
+
+_file_handler = TimedRotatingFileHandler(
+    _log_dir / "backend.log", when="midnight", backupCount=30, encoding="utf-8",
+)
+_file_handler.setFormatter(_log_fmt)
+
+_root_logger = logging.getLogger()
+_root_logger.setLevel(logging.INFO)
+_root_logger.addHandler(_stream_handler)
+_root_logger.addHandler(_file_handler)
+
 logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
@@ -58,6 +78,18 @@ def _data_is_stale() -> bool:
         db.close()
 
 
+def _auto_trade_not_run_today() -> bool:
+    """今日の自動売買ログが0件か"""
+    db = SessionLocal()
+    try:
+        from src.models.stock import AutoTradeLog
+        today_start = datetime.combine(date.today(), time(0, 0))
+        count = db.query(AutoTradeLog).filter(AutoTradeLog.created_at >= today_start).count()
+        return count == 0
+    finally:
+        db.close()
+
+
 def scheduled_update():
     """定期更新ジョブ"""
     logger.info("=== Scheduled update started ===")
@@ -84,14 +116,21 @@ def scheduled_update():
 
 
 def watchdog_check():
-    """WSLスリープ復帰対策: データが古ければ即時更新"""
+    """WSLスリープ復帰対策: データが古い or 自動売買未実行なら即時更新"""
     if not _is_trading_day():
         return
     if not _should_have_run_today():
         return
-    if not _data_is_stale():
+    stale = _data_is_stale()
+    no_trade = _auto_trade_not_run_today()
+    if not stale and not no_trade:
         return
-    logger.info("[watchdog] Stale data detected after sleep/resume, running catch-up update")
+    reason = []
+    if stale:
+        reason.append("stale data")
+    if no_trade:
+        reason.append("no auto-trade logs today")
+    logger.info(f"[watchdog] Catch-up needed: {', '.join(reason)}")
     scheduled_update()
 
 
@@ -103,7 +142,7 @@ async def lifespan(app: FastAPI):
     # 簡易マイグレーション: signals テーブルに新列追加
     new_columns = [
         ("signal_strength", "INTEGER"),
-        ("active_signals", "VARCHAR(100)"),
+        ("active_signals", "VARCHAR(200)"),
         ("target_price", "FLOAT"),
         ("stop_loss_price", "FLOAT"),
         ("support_price", "FLOAT"),
@@ -119,19 +158,46 @@ async def lifespan(app: FastAPI):
         for col_name, col_type in new_columns:
             try:
                 conn.execute(text(f"ALTER TABLE signals ADD COLUMN {col_name} {col_type}"))
-                print(f"[migration] Added column signals.{col_name}")
-            except Exception:
-                pass  # 既に存在する場合はスキップ
+                logger.info(f"[migration] Added column signals.{col_name}")
+            except Exception as e:
+                err_msg = str(e).lower()
+                if "already exists" in err_msg or "duplicate column" in err_msg:
+                    pass  # 既に存在 → 正常
+                else:
+                    logger.error(f"[migration] Failed to add signals.{col_name}: {e}")
+                conn.rollback()
         conn.commit()
 
-    # 簡易マイグレーション: settings.value 列幅拡張
+    # 簡易マイグレーション: 列幅拡張
+    alter_type_queries = [
+        ("ALTER TABLE signals ALTER COLUMN active_signals TYPE VARCHAR(200)", "signals.active_signals → VARCHAR(200)"),
+        ("ALTER TABLE settings ALTER COLUMN value TYPE VARCHAR(500)", "settings.value → VARCHAR(500)"),
+    ]
+    for query, desc in alter_type_queries:
+        with engine.connect() as conn:
+            try:
+                conn.execute(text(query))
+                conn.commit()
+                logger.info(f"[migration] Expanded {desc}")
+            except Exception as e:
+                conn.rollback()
+                err_msg = str(e).lower()
+                if "already" not in err_msg:
+                    logger.error(f"[migration] Failed to expand {desc}: {e}")
+
+    # マイグレーション検証: 必須列の存在確認
     with engine.connect() as conn:
-        try:
-            conn.execute(text("ALTER TABLE settings ALTER COLUMN value TYPE VARCHAR(500)"))
-            print("[migration] Expanded settings.value to VARCHAR(500)")
-        except Exception:
-            pass
-        conn.commit()
+        result = conn.execute(text(
+            "SELECT column_name FROM information_schema.columns "
+            "WHERE table_name = 'signals'"
+        ))
+        existing_cols = {row[0] for row in result}
+        required = {col_name for col_name, _ in new_columns}
+        missing = required - existing_cols
+        if missing:
+            logger.error(f"[migration] CRITICAL: signals table missing columns: {missing}")
+        else:
+            logger.info(f"[migration] Verified: all {len(required)} columns present")
 
     # 依存ライブラリチェック
     for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:
@@ -157,10 +223,20 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     logger.info("Scheduler started")
 
-    # 起動時キャッチアップ: 平日でスケジュール時刻を過ぎていればデータ鮮度チェック
-    if _should_have_run_today() and _data_is_stale():
-        logger.info("[startup] Catch-up: data is stale, running update now")
-        scheduler.add_job(scheduled_update, id='startup_catchup')
+    # 起動時キャッチアップ: 平日でスケジュール時刻を過ぎていれば鮮度 or 自動売買ログをチェック
+    if _should_have_run_today():
+        stale = _data_is_stale()
+        no_trade = _auto_trade_not_run_today()
+        if stale or no_trade:
+            reason = []
+            if stale:
+                reason.append("stale data")
+            if no_trade:
+                reason.append("no auto-trade logs today")
+            logger.info(f"[startup] Catch-up needed: {', '.join(reason)}")
+            scheduler.add_job(scheduled_update, id='startup_catchup')
+        else:
+            logger.info("[startup] No catch-up needed")
     else:
         logger.info("[startup] No catch-up needed")
 

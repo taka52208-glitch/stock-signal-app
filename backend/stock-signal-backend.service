@@ -1,0 +1,21 @@
+[Unit]
+Description=Stock Signal Backend API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=taka
+WorkingDirectory=/home/taka/優良株情報取得ツール/backend
+EnvironmentFile=/home/taka/優良株情報取得ツール/backend/.env.local
+ExecStart=/home/taka/優良株情報取得ツール/backend/venv/bin/uvicorn src.main:app --host 0.0.0.0 --port 8734
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=stock-signal
+KillSignal=SIGTERM
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
