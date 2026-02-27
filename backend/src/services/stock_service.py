@@ -377,8 +377,8 @@ class StockService:
 
             # ATR ベース目標価格/損切り
             if atr is not None and not pd.isna(atr) and atr > 0:
-                target_price = current_price + 3 * atr
-                stop_loss_price = current_price - 2 * atr
+                target_price = current_price + 4 * atr
+                stop_loss_price = current_price - 2.5 * atr
             else:
                 # フォールバック: 従来ロジック
                 candidates = [resistance_price]

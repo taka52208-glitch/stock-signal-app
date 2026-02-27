@@ -199,6 +199,30 @@ async def lifespan(app: FastAPI):
         else:
             logger.info(f"[migration] Verified: all {len(required)} columns present")
 
+    # Phase 20 マイグレーション: 旧デフォルト値を新デフォルト値にアップグレード
+    phase20_upgrades = [
+        # (テーブル, キー列, 値列, キー, 旧デフォルト, 新デフォルト)
+        ('settings', 'key', 'value', 'investmentBudget', '100000', '1000000'),
+        ('settings', 'key', 'value', 'investmentBudget', '50000', '1000000'),
+        ('auto_trade_config', 'key', 'value', 'maxTradesPerDay', '5', '15'),
+        ('auto_trade_config', 'key', 'value', 'takeProfitPercent', '5.0', '8.0'),
+        ('auto_trade_config', 'key', 'value', 'stopLossPercent', '-3.0', '-5.0'),
+        ('risk_rules', 'key', 'value', 'maxOpenPositions', '5', '10'),
+    ]
+    with engine.connect() as conn:
+        for table, key_col, val_col, key, old_val, new_val in phase20_upgrades:
+            try:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET {val_col} = :new_val "
+                    f"WHERE {key_col} = :key AND {val_col} = :old_val"
+                ), {'new_val': new_val, 'old_val': old_val, 'key': key})
+                if result.rowcount > 0:
+                    logger.info(f"[migration/phase20] {table}.{key}: {old_val} → {new_val}")
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"[migration/phase20] {table}.{key} skip: {e}")
+        conn.commit()
+
     # 依存ライブラリチェック
     for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:
         try:

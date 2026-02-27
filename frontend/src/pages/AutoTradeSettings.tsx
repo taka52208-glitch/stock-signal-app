@@ -14,11 +14,11 @@ import type { AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog } from '../ty
 const DEFAULT_CONFIG: AutoTradeConfig = {
   enabled: true,
   minSignalStrength: 1,
-  maxTradesPerDay: 5,
+  maxTradesPerDay: 15,
   orderType: 'market',
   dryRun: true,
-  takeProfitPercent: 5.0,
-  stopLossPercent: -3.0,
+  takeProfitPercent: 8.0,
+  stopLossPercent: -5.0,
 };
 
 const STATUS_LABELS: Record<string, { label: string; color: 'success' | 'error' | 'warning' | 'default' }> = {
@@ -317,9 +317,15 @@ export default function AutoTradeSettings() {
               value={config.maxTradesPerDay}
               onChange={(_, v) => setConfig(prev => ({ ...prev, maxTradesPerDay: v as number }))}
               min={1}
-              max={10}
+              max={20}
               step={1}
-              marks
+              marks={[
+                { value: 1, label: '1' },
+                { value: 5, label: '5' },
+                { value: 10, label: '10' },
+                { value: 15, label: '15' },
+                { value: 20, label: '20' },
+              ]}
               valueLabelDisplay="auto"
             />
           </Box>

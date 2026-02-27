@@ -1,12 +1,13 @@
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 from src.models.stock import RiskRule, Stock, StockPrice, Signal, Transaction
 
 
 DEFAULT_RISK_RULES = {
     'maxPositionPercent': '30',       # 1銘柄最大ポートフォリオ比率(%)
-    'maxLossPerTrade': '5',           # 1取引最大損失率(%)
+    'maxLossPerTrade': '10',          # 1取引最大損失率(%)
     'maxPortfolioLoss': '10',         # ポートフォリオ最大損失率(%)
-    'maxOpenPositions': '5',          # 最大保有銘柄数
+    'maxOpenPositions': '10',         # 最大保有銘柄数
 }
 
 
@@ -40,7 +41,8 @@ class RiskService:
         self.db.commit()
         return self.get_risk_rules()
 
-    def evaluate_trade(self, code: str, trade_type: str, quantity: int, price: float) -> dict:
+    def evaluate_trade(self, code: str, trade_type: str, quantity: int, price: float,
+                       dry_run: bool = False) -> dict:
         """取引前リスク評価"""
         rules = self.get_risk_rules()
         warnings = []
@@ -48,19 +50,13 @@ class RiskService:
         trade_amount = quantity * price
 
         # 現在のポートフォリオ状態を計算
-        transactions = self.db.query(Transaction).all()
-        holdings = {}
-        total_value = 0
-        for t in transactions:
-            if t.code not in holdings:
-                holdings[t.code] = {'buy_qty': 0, 'buy_total': 0, 'sell_qty': 0}
-            if t.transaction_type == 'buy':
-                holdings[t.code]['buy_qty'] += t.quantity
-                holdings[t.code]['buy_total'] += t.quantity * t.price
-            else:
-                holdings[t.code]['sell_qty'] += t.quantity
+        if dry_run:
+            holdings = self._get_dry_run_holdings()
+        else:
+            holdings = self._get_real_holdings()
 
         active_positions = 0
+        total_value = 0
         for c, data in holdings.items():
             qty = data['buy_qty'] - data['sell_qty']
             if qty > 0:
@@ -133,6 +129,42 @@ class RiskService:
             'currentPortfolioValue': round(total_value, 2),
             'activePositions': active_positions,
         }
+
+    def _get_real_holdings(self) -> dict:
+        """Transactionテーブルからポートフォリオを計算"""
+        transactions = self.db.query(Transaction).all()
+        holdings = {}
+        for t in transactions:
+            if t.code not in holdings:
+                holdings[t.code] = {'buy_qty': 0, 'buy_total': 0, 'sell_qty': 0}
+            if t.transaction_type == 'buy':
+                holdings[t.code]['buy_qty'] += t.quantity
+                holdings[t.code]['buy_total'] += t.quantity * t.price
+            else:
+                holdings[t.code]['sell_qty'] += t.quantity
+        return holdings
+
+    def _get_dry_run_holdings(self) -> dict:
+        """auto_trade_logからドライラン仮想ポートフォリオを計算"""
+        logs = self.db.execute(text('''
+            SELECT DISTINCT ON (code, signal_type, DATE_TRUNC('hour', created_at))
+                code, signal_type, order_price, quantity
+            FROM auto_trade_log
+            WHERE result_status = 'success' AND dry_run = true
+            ORDER BY code, signal_type, DATE_TRUNC('hour', created_at), created_at
+        ''')).fetchall()
+        holdings = {}
+        for code, sig, price, qty in logs:
+            if not qty or not price:
+                continue
+            if code not in holdings:
+                holdings[code] = {'buy_qty': 0, 'buy_total': 0, 'sell_qty': 0}
+            if sig == 'buy':
+                holdings[code]['buy_qty'] += qty
+                holdings[code]['buy_total'] += float(price) * qty
+            else:
+                holdings[code]['sell_qty'] += qty
+        return holdings
 
     def get_checklist(self, code: str) -> dict:
         """取引チェックリスト"""

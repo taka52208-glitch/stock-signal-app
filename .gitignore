@@ -28,4 +28,5 @@ Thumbs.db
 
 # Logs
 *.log
+backend/logs/
 nohup.out

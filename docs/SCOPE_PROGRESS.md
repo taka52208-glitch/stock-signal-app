@@ -19,6 +19,9 @@
 - [x] Phase 15: 自動売買安定化・本番環境バグ修正
 - [x] Phase 16: シグナルロジック強化（収益性向上）
 - [x] Phase 17: シグナル取引頻度改善
+- [x] Phase 18: 自動売買の実行信頼性強化
+- [x] Phase 19: ドライラン自動売買の実用性改善
+- [x] Phase 20: ドライラン投入金額・利益改善
 
 ---
 
@@ -137,7 +140,7 @@
 - [x] リスク管理サービス（ルール評価・チェックリスト・価格提案）
 - [x] バックテストサービス（戦略シミュレーション・スナップショット・比較）
 - [x] 証券会社連携サービス（kabu STATION API・注文・残高・ポジション）
-- [x] 自動売買サービス（シグナル連動・ドライラン・ATR動的損切り/利確・トレーリングストップ・全ケースログ記録・実現/含み損益計算）
+- [x] 自動売買サービス（シグナル連動・ドライラン・ATR動的損切り/利確・トレーリングストップ・全ケースログ記録・実現/含み損益計算・重複買い防止・ドライラン仮想ポートフォリオ対応リスク評価）
 - [x] 定期更新スケジューラ（09:30〜15:30毎時 + アラート・自動売買連動 + watchdog復帰対策）
 - [x] CORS設定（Vercelサブドメイン正規表現対応）
 - [x] グレースフルシャットダウン（SIGTERM対応）
@@ -172,6 +175,7 @@
 | カスタムフック分離 | 低 | 現状はページ内にインライン |
 | Cloudflare Named Tunnel | 低 | 現状Quick Tunnel（URL変動）で運用中。ドメイン取得で固定URL化可能 |
 | バックエンドプロセス監視 | ~~中~~ 済 | ~~start.shでuvicornが落ちても再起動されない~~ watchdog実装済み |
+| ~~investmentBudget増額~~ | ~~低~~ 済 | ~~現在50,000円~~ Phase 20で1,000,000円に増額済み |
 
 ---
 
@@ -195,7 +199,7 @@
 3. **トレンドフィルター**: 価格<SMA75で買い抑制、価格>SMA75で売り抑制。下降トレンドでの買いシグナルを排除
 4. **BBシグナル**: BB下限バウンス→買い、BB上限タッチ→売り（前日の抜けから当日の反転を確認）
 5. **出来高確認**: volume_ratio >= 1.5の場合に確認加点（単独ではシグナルにならない）
-6. **ATR動的損切り/利確**: 買いシグナル時 目標=entry+3*ATR, 損切り=entry-2*ATR（ATR未取得時は従来の固定%にフォールバック）
+6. **ATR動的損切り/利確**: 買いシグナル時 目標=entry+4*ATR, 損切り=entry-2.5*ATR（ATR未取得時は従来の固定%にフォールバック）※Phase 20で倍率変更
 7. **トレーリングストップ**: 含み益>=2*ATRでトレーリングストップ発動、含み益>=1*ATRでブレークイーブンストップ
 8. **フロントエンド型拡張**: StockDetail/ChartDataにBB/ATR/volumeRatio/signalScore追加
 
@@ -225,3 +229,76 @@
 ### 初回実行結果（2/25）
 - buy: 2銘柄 (6098 RSI, 7741 MACD)、sell: 2銘柄 (8058 RSI, 6273 RSI)、hold: 16銘柄
 - 新シグナル（RSI_Rising, MACD_Hist, PriceAboveMA25等）は当日の市場状況では未発火。数日間の運用で効果検証予定
+
+---
+
+## Phase 18: 自動売買の実行信頼性強化（2026-02-26）
+
+### 対応内容
+1. **systemdサービス化**: `stock-signal-backend.service`（Restart=always, enabled）で常時稼働を保証
+2. **旧サービス整理**: `kabu-signal.service`（system/user両方）とcrontab `@reboot start-daemon.sh` を停止・削除
+3. **ファイルログ追加**: `backend/logs/backend.log`（TimedRotatingFileHandler, 日次30日保持）
+4. **キャッチアップ強化**: `_auto_trade_not_run_today()` で auto_trade_log の有無もチェック
+5. **watchdog拡張**: lifespan + watchdog_check 両方で stale data/no auto-trade logs 条件に拡張
+
+---
+
+## Phase 19: ドライラン自動売買の実用性改善（2026-02-26）
+
+### 背景
+4日間のドライラン実績分析で3つの構造的問題を発見:
+- 同一銘柄（6098）を4回重複購入（ポジション確認なし）
+- ATR損切り距離 > 5% で大半がリスクブロック（2/26は7件中5件）
+- 非保有株の売りシグナルログが冗長
+
+### 対応内容
+1. **重複買い防止**: buy処理冒頭で既存保有チェック。保有中なら `skipped`（「既に保有中（N株）」）でスキップ
+2. **ドライラン対応リスク評価**: `evaluate_trade()` に `dry_run` パラメータ追加。ドライラン時は `auto_trade_log` から仮想ポートフォリオを計算し `maxOpenPositions` が正しく機能
+3. **maxLossPerTrade 緩和**: デフォルト 5% → 10%。ATR損切り（entry - 2*ATR）の通常距離 5-10% に適合
+4. **非保有売りのログ軽減**: logger出力を `info` → `debug` に変更（DBログは維持）
+
+### 変更ファイル
+- `backend/src/services/auto_trade_service.py` — 修正1, 2, 4
+- `backend/src/services/risk_service.py` — 修正2, 3（`_get_real_holdings()` / `_get_dry_run_holdings()` ヘルパー追加）
+
+### 期待効果
+- 同一銘柄の重複購入が解消（1銘柄1ポジション）
+- risk_blocked率の大幅減少（5%→10%閾値で大半のATR損切りが通過）
+- ドライランでもmaxOpenPositions（5銘柄上限）が正しく適用
+- ログのS/N比向上（非保有売りのノイズ除去）
+
+---
+
+## Phase 20: ドライラン投入金額・利益改善（2026-02-27）
+
+### 背景
+- ドライラン投資予算が5万円（1銘柄1万円）と少なすぎ、高価格帯銘柄が購入不可
+- 利確が早すぎ（5%/無条件7.5%）で大きなトレンドを取れない
+- 1日5回の取引上限で機会損失
+
+### 対応内容
+1. **投資予算増額**: 50,000円 → 1,000,000円（DBマイグレーション付き）
+2. **予算計算ロジック改善**: 固定 `/5` → `/ maxOpenPositions` に連動（設定変更時に自動追従）
+3. **最大保有銘柄数増加**: 5 → 10（1銘柄あたり10万円で分散投資拡大）
+4. **1日最大取引数増加**: 5 → 15（取引チャンス増加）
+5. **利確閾値改善**: takeProfitPercent 5.0% → 8.0%、無条件利確 1.5倍(7.5%) → 2.0倍(16%)
+6. **損切り閾値改善**: stopLossPercent -3.0% → -5.0%（ノイズで切られにくく）
+7. **ATR利確倍率変更**: entry + 3*ATR → entry + 4*ATR（大きなトレンド捕捉）
+8. **ATR損切り倍率変更**: entry - 2*ATR → entry - 2.5*ATR（余裕を持たせた損切り）
+9. **Signal保存値の整合**: stock_service.py の target_price/stop_loss_price を新ATR倍率に統一
+10. **DBマイグレーション**: main.py lifespan で旧デフォルト値のみ条件付きUPDATE（冪等・カスタム値保持）
+11. **フロントエンド更新**: maxTradesPerDay スライダー max=10→20、デフォルト値をバックエンドと統一
+
+### 変更ファイル
+- `backend/src/config.py` — 修正1
+- `backend/src/services/auto_trade_service.py` — 修正2, 4, 5, 6, 7, 8
+- `backend/src/services/risk_service.py` — 修正3
+- `backend/src/services/stock_service.py` — 修正9
+- `backend/src/main.py` — 修正10
+- `frontend/src/pages/AutoTradeSettings.tsx` — 修正11
+
+### 期待効果
+- 1銘柄あたり投入額10万円で高価格帯銘柄も購入可能
+- 最大10銘柄×10万円 = 100万円のフル活用
+- 利確幅拡大でトレンド追従型の利益向上
+- ATR 4倍利確で大幅な値上がりを捕捉

@@ -16,11 +16,11 @@ logger = logging.getLogger(__name__)
 DEFAULT_CONFIG = {
     'enabled': 'true',
     'minSignalStrength': '1',
-    'maxTradesPerDay': '5',
+    'maxTradesPerDay': '15',
     'orderType': 'market',
     'dryRun': 'true',
-    'takeProfitPercent': '5.0',
-    'stopLossPercent': '-3.0',
+    'takeProfitPercent': '8.0',
+    'stopLossPercent': '-5.0',
 }
 
 
@@ -475,14 +475,14 @@ class AutoTradeService:
 
                     if sig_atr and sig_atr > 0:
                         # --- ATR動的閾値 + トレーリングストップ ---
-                        atr_take_profit = entry_price + 3 * sig_atr
-                        atr_stop_loss = entry_price - 2 * sig_atr
+                        atr_take_profit = entry_price + 4 * sig_atr
+                        atr_stop_loss = entry_price - 2.5 * sig_atr
                         atr_gain = current_price - entry_price
                         atr_trailing_threshold = 2 * sig_atr  # 含み益 >= 2*ATR でトレーリング
                         atr_breakeven_threshold = 1 * sig_atr  # 含み益 >= 1*ATR でブレークイーブン
 
                         if current_price >= atr_take_profit:
-                            # ATR利確: entry + 3*ATR 到達
+                            # ATR利確: entry + 4*ATR 到達
                             sell_reason = (
                                 f'ATR利確（現在値 {current_price:.0f} >= 目標 {atr_take_profit:.0f}, '
                                 f'含み益 {gain_pct:.1f}%）'
@@ -514,8 +514,8 @@ class AutoTradeService:
                     else:
                         # --- フォールバック: 従来の固定%ロジック ---
                         # 大幅利益 → 無条件利確
-                        if gain_pct >= take_profit_pct * 1.5:
-                            sell_reason = f'自動利確（含み益 {gain_pct:.1f}% >= {take_profit_pct * 1.5:.1f}%）'
+                        if gain_pct >= take_profit_pct * 2.0:
+                            sell_reason = f'自動利確（含み益 {gain_pct:.1f}% >= {take_profit_pct * 2.0:.1f}%）'
                         # 利確閾値超え + 直近下落 → 利確
                         elif gain_pct >= take_profit_pct:
                             recent_2 = self.db.query(StockPrice).filter(
@@ -618,9 +618,24 @@ class AutoTradeService:
                 )
                 continue
 
-            # c. 数量計算（1銘柄あたり20%に制限）
+            # c. 数量計算（1銘柄あたり = 予算 / 最大保有銘柄数）
             if latest_signal.signal_type == 'buy':
-                budget = settings['investmentBudget'] / 5
+                # 重複買い防止: 既に保有中の銘柄はスキップ
+                existing_qty = (self._get_dry_run_holding_quantity(code) if config['dryRun']
+                                else self._get_holding_quantity(code))
+                if existing_qty > 0:
+                    self._add_log(
+                        code=code, signal_type='buy', signal_strength=strength,
+                        active_signals=latest_signal.active_signals,
+                        order_price=current_price, quantity=0,
+                        result_status='skipped',
+                        result_message=f'既に保有中（{existing_qty}株）',
+                        dry_run=config['dryRun'],
+                    )
+                    continue
+                risk_rules = risk_service.get_risk_rules()
+                max_positions = risk_rules['maxOpenPositions'] or 5
+                budget = settings['investmentBudget'] / max_positions
                 quantity = int(budget / current_price) if current_price > 0 else 0
                 if quantity <= 0:
                     self._add_log(
@@ -641,6 +656,7 @@ class AutoTradeService:
                 else:
                     quantity = self._get_holding_quantity(code)
                 if quantity <= 0:
+                    logger.debug(f"[auto-trade] {code}: sell skipped (no holdings)")
                     self._add_log(
                         code=code,
                         signal_type='sell',
@@ -660,7 +676,8 @@ class AutoTradeService:
 
             # d. リスク評価
             risk_result = risk_service.evaluate_trade(
-                code, latest_signal.signal_type, quantity, current_price
+                code, latest_signal.signal_type, quantity, current_price,
+                dry_run=config['dryRun'],
             )
             risk_warnings = [
                 {'level': w['level'], 'message': w['message']}
