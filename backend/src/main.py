@@ -45,10 +45,11 @@ logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
 
-# スケジュール時刻（平日のみ）— 取引時間中は1時間ごと
+# スケジュール時刻（平日のみ）— 取引時間中は30分ごと
 SCHEDULE_TIMES = [
-    time(9, 30), time(10, 30), time(11, 30),
-    time(12, 30), time(13, 30), time(14, 30), time(15, 30),
+    time(9, 30), time(10, 0), time(10, 30), time(11, 0), time(11, 30),
+    time(12, 30), time(13, 0), time(13, 30), time(14, 0), time(14, 30),
+    time(15, 0), time(15, 30),
 ]
 
 
@@ -153,6 +154,10 @@ async def lifespan(app: FastAPI):
         ("atr", "FLOAT"),
         ("volume_ratio", "FLOAT"),
         ("signal_score", "FLOAT"),
+        ("stoch_k", "FLOAT"),
+        ("stoch_d", "FLOAT"),
+        ("williams_r", "FLOAT"),
+        ("adx", "FLOAT"),
     ]
     with engine.connect() as conn:
         for col_name, col_type in new_columns:
@@ -223,6 +228,135 @@ async def lifespan(app: FastAPI):
                 logger.debug(f"[migration/phase20] {table}.{key} skip: {e}")
         conn.commit()
 
+    # Phase 21 マイグレーション: RSI閾値を緩和（シグナル感度向上）
+    phase21_upgrades = [
+        ('settings', 'key', 'value', 'rsiBuyThreshold', '30', '40'),
+        ('settings', 'key', 'value', 'rsiBuyThreshold', '35', '40'),
+        ('settings', 'key', 'value', 'rsiSellThreshold', '70', '60'),
+        ('settings', 'key', 'value', 'rsiSellThreshold', '65', '60'),
+    ]
+    with engine.connect() as conn:
+        for table, key_col, val_col, key, old_val, new_val in phase21_upgrades:
+            try:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET {val_col} = :new_val "
+                    f"WHERE {key_col} = :key AND {val_col} = :old_val"
+                ), {'new_val': new_val, 'old_val': old_val, 'key': key})
+                if result.rowcount > 0:
+                    logger.info(f"[migration/phase21] {table}.{key}: {old_val} → {new_val}")
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"[migration/phase21] {table}.{key} skip: {e}")
+        conn.commit()
+
+    # Phase 21: 銘柄自動登録（STOCK_NAMESの未登録銘柄をバルク追加）
+    from src.services.stock_service import STOCK_NAMES
+    with SessionLocal() as db:
+        try:
+            existing_codes = {row[0] for row in db.execute(text("SELECT code FROM stocks")).fetchall()}
+            new_codes = set(STOCK_NAMES.keys()) - existing_codes
+            if new_codes:
+                for code in sorted(new_codes):
+                    name = STOCK_NAMES[code]
+                    db.execute(text(
+                        "INSERT INTO stocks (code, name) VALUES (:code, :name)"
+                    ), {'code': code, 'name': name})
+                    # AutoTradeStock有効化
+                    existing_ats = db.execute(text(
+                        "SELECT code FROM auto_trade_stocks WHERE code = :code"
+                    ), {'code': code}).fetchone()
+                    if not existing_ats:
+                        db.execute(text(
+                            "INSERT INTO auto_trade_stocks (code, enabled) VALUES (:code, true)"
+                        ), {'code': code})
+                db.commit()
+                logger.info(f"[migration/phase21] Registered {len(new_codes)} new stocks: {sorted(new_codes)}")
+            else:
+                logger.info("[migration/phase21] All stocks already registered")
+        except Exception as e:
+            db.rollback()
+            logger.error(f"[migration/phase21] Stock registration failed: {e}")
+
+    # Phase 22 マイグレーション: 利益率・勝率改善パラメータ
+    phase22_upgrades = [
+        # minSignalStrength: 1→2（弱いシグナルでの取引を排除）
+        ('auto_trade_config', 'key', 'value', 'minSignalStrength', '1', '2'),
+        # takeProfitPercent: 8.0→10.0（リスクリワード比 1:2 に改善）
+        ('auto_trade_config', 'key', 'value', 'takeProfitPercent', '8.0', '10.0'),
+    ]
+    with engine.connect() as conn:
+        for table, key_col, val_col, key, old_val, new_val in phase22_upgrades:
+            try:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET {val_col} = :new_val "
+                    f"WHERE {key_col} = :key AND {val_col} = :old_val"
+                ), {'new_val': new_val, 'old_val': old_val, 'key': key})
+                if result.rowcount > 0:
+                    logger.info(f"[migration/phase22] {table}.{key}: {old_val} → {new_val}")
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"[migration/phase22] {table}.{key} skip: {e}")
+        conn.commit()
+
+    # Phase 23 マイグレーション: ポジション集中 + 利益率改善
+    phase23_upgrades = [
+        # maxOpenPositions: 10→5（1銘柄あたり投資額を倍増）
+        ('risk_rules', 'key', 'value', 'maxOpenPositions', '10', '5'),
+    ]
+    with engine.connect() as conn:
+        for table, key_col, val_col, key, old_val, new_val in phase23_upgrades:
+            try:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET {val_col} = :new_val "
+                    f"WHERE {key_col} = :key AND {val_col} = :old_val"
+                ), {'new_val': new_val, 'old_val': old_val, 'key': key})
+                if result.rowcount > 0:
+                    logger.info(f"[migration/phase23] {table}.{key}: {old_val} → {new_val}")
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"[migration/phase23] {table}.{key} skip: {e}")
+        conn.commit()
+
+    # Phase 24 マイグレーション: 取引頻度改善（リスク緩和 + シグナル強度閾値引き下げ）
+    phase24_upgrades = [
+        ('auto_trade_config', 'key', 'value', 'minSignalStrength', '2', '1'),
+        ('risk_rules', 'key', 'value', 'maxPositionPercent', '30', '40'),
+        ('risk_rules', 'key', 'value', 'maxLossPerTrade', '10', '15'),
+        ('risk_rules', 'key', 'value', 'maxOpenPositions', '5', '10'),
+    ]
+    with engine.connect() as conn:
+        for table, key_col, val_col, key, old_val, new_val in phase24_upgrades:
+            try:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET {val_col} = :new_val "
+                    f"WHERE {key_col} = :key AND {val_col} = :old_val"
+                ), {'new_val': new_val, 'old_val': old_val, 'key': key})
+                if result.rowcount > 0:
+                    logger.info(f"[migration/phase24] {table}.{key}: {old_val} → {new_val}")
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"[migration/phase24] {table}.{key} skip: {e}")
+        conn.commit()
+
+    # Phase 25 マイグレーション: 利益率改善（エントリー精度向上 + ポジション集中）
+    phase25_upgrades = [
+        ('auto_trade_config', 'key', 'value', 'minSignalStrength', '1', '2'),
+        ('risk_rules', 'key', 'value', 'maxOpenPositions', '10', '5'),
+    ]
+    with engine.connect() as conn:
+        for table, key_col, val_col, key, old_val, new_val in phase25_upgrades:
+            try:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET {val_col} = :new_val "
+                    f"WHERE {key_col} = :key AND {val_col} = :old_val"
+                ), {'new_val': new_val, 'old_val': old_val, 'key': key})
+                if result.rowcount > 0:
+                    logger.info(f"[migration/phase25] {table}.{key}: {old_val} → {new_val}")
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"[migration/phase25] {table}.{key} skip: {e}")
+        conn.commit()
+
     # 依存ライブラリチェック
     for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:
         try:
@@ -231,7 +365,7 @@ async def lifespan(app: FastAPI):
         except ImportError as e:
             logger.warning(f"[startup] {lib} UNAVAILABLE: {e}")
 
-    # スケジューラー設定（平日 取引時間中1時間ごと）
+    # スケジューラー設定（平日 取引時間中30分ごと）
     for t in SCHEDULE_TIMES:
         job_id = f'update_{t.hour:02d}{t.minute:02d}'
         scheduler.add_job(

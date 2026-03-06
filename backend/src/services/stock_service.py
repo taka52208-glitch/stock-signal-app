@@ -40,6 +40,37 @@ STOCK_NAMES = {
     '7741': 'HOYA',
     '6594': 'ニデック',
     '6273': 'SMC',
+    # Phase 21 追加 (30銘柄)
+    '8316': '三井住友フィナンシャルグループ',
+    '8411': 'みずほフィナンシャルグループ',
+    '8766': '東京海上ホールディングス',
+    '6367': 'ダイキン工業',
+    '6971': '京セラ',
+    '7267': '本田技研工業',
+    '7269': 'スズキ',
+    '4755': '楽天グループ',
+    '9613': 'NTTデータグループ',
+    '4689': 'LINEヤフー',
+    '8001': '伊藤忠商事',
+    '8031': '三井物産',
+    '8053': '住友商事',
+    '4502': '武田薬品工業',
+    '4503': 'アステラス製薬',
+    '9433': 'KDDI',
+    '9434': 'ソフトバンク',
+    '8830': '住友不動産',
+    '3289': '東急不動産ホールディングス',
+    '2914': '日本たばこ産業',
+    '2802': '味の素',
+    '9501': '東京電力ホールディングス',
+    '4911': '資生堂',
+    '4452': '花王',
+    '5401': '日本製鉄',
+    '5108': 'ブリヂストン',
+    '6762': 'TDK',
+    '6981': '村田製作所',
+    '9766': 'コナミグループ',
+    '3659': 'ネクソン',
 }
 
 
@@ -190,10 +221,29 @@ class StockService:
             vol_sma20 = ta.sma(df['volume'].astype(float), length=20)
             df['volume_ratio'] = df['volume'].astype(float) / vol_sma20.replace(0, np.nan)
 
+        # ストキャスティクス (%K=14, %D=3)
+        if 'high' in df.columns and 'low' in df.columns:
+            stoch = ta.stoch(df['high'], df['low'], df['close'], k=14, d=3)
+            if stoch is not None:
+                df['stoch_k'] = stoch.iloc[:, 0]
+                df['stoch_d'] = stoch.iloc[:, 1]
+
+        # ウィリアムズ %R (14日)
+        if 'high' in df.columns and 'low' in df.columns:
+            willr = ta.willr(df['high'], df['low'], df['close'], length=14)
+            if willr is not None:
+                df['williams_r'] = willr
+
+        # ADX (14日) - トレンド強度
+        if 'high' in df.columns and 'low' in df.columns:
+            adx = ta.adx(df['high'], df['low'], df['close'], length=14)
+            if adx is not None:
+                df['adx'] = adx.iloc[:, 0]  # ADX値
+
         return df
 
     def calculate_signal_details(self, df: pd.DataFrame, settings: dict) -> dict:
-        """シグナル詳細を計算（加重スコアリング + トレンドフィルター）"""
+        """シグナル詳細を計算（加重スコアリング + ADX相場判定 + 確認待ち2日）"""
         if len(df) < 2:
             return {
                 'signal_type': 'hold', 'signal_strength': 0, 'active_signals': [],
@@ -219,6 +269,13 @@ class StockService:
         bb_middle = latest.get('bb_middle')
         atr = latest.get('atr')
         volume_ratio = latest.get('volume_ratio')
+        stoch_k = latest.get('stoch_k')
+        stoch_d = latest.get('stoch_d')
+        prev_stoch_k = prev.get('stoch_k')
+        prev_stoch_d = prev.get('stoch_d')
+        williams_r = latest.get('williams_r')
+        prev_williams_r = prev.get('williams_r')
+        adx = latest.get('adx')
 
         # --- 買いシグナル判定（加重スコア） ---
         buy_signals = []
@@ -229,18 +286,20 @@ class StockService:
         if rsi is not None and not pd.isna(rsi) and rsi <= settings['rsiBuyThreshold']:
             buy_signals.append('RSI')
             buy_score += 1.0
-        # RSI モメンタムゾーン (重み 0.5): RSI 35-45 かつ上昇中
-        elif (rsi is not None and not pd.isna(rsi) and 35 <= rsi <= 45
+        # RSI モメンタムゾーン (重み 0.7): RSI閾値～閾値+10 かつ上昇中
+        elif (rsi is not None and not pd.isna(rsi)
+              and settings['rsiBuyThreshold'] < rsi <= settings['rsiBuyThreshold'] + 10
               and prev_rsi is not None and not pd.isna(prev_rsi) and rsi > prev_rsi):
             buy_signals.append('RSI_Rising')
-            buy_score += 0.5
+            buy_score += 0.7
 
-        # MACD クロスオーバー (重み 1.5) / ヒストグラム反転 (重み 0.8, 排他)
+        # MACD クロスオーバー (重み 1.5, 確認待ち2日) / ヒストグラム反転 (重み 1.0, 排他)
         macd_histogram = latest.get('macd_histogram')
         prev_histogram = prev.get('macd_histogram')
         if macd_val is not None and macd_sig is not None:
             prev_macd = prev.get('macd', 0) or 0
             prev_sig = prev.get('macd_signal', 0) or 0
+            # 確認待ち2日: 前日クロス発生(prev<=prevsig) + 今日維持(macd>sig)
             if prev_macd <= prev_sig and macd_val > macd_sig:
                 buy_signals.append('MACD')
                 buy_score += 1.5
@@ -248,13 +307,14 @@ class StockService:
                   and not pd.isna(macd_histogram) and not pd.isna(prev_histogram)
                   and prev_histogram <= 0 and macd_histogram > 0):
                 buy_signals.append('MACD_Hist')
-                buy_score += 0.8
+                buy_score += 1.0
 
-        # ゴールデンクロス (重み 1.0) / 価格-MA25クロス (重み 0.5, 排他)
+        # ゴールデンクロス (重み 1.0, 確認待ち2日) / 価格-MA25クロス (重み 0.5, 排他)
         has_golden_cross = False
         if sma_short is not None and sma_mid is not None:
-            if prev_sma_short is not None and prev_sma_mid is not None:
-                if not pd.isna(prev_sma_short) and not pd.isna(prev_sma_mid):
+            if (prev_sma_short is not None and prev_sma_mid is not None):
+                if (not pd.isna(prev_sma_short) and not pd.isna(prev_sma_mid)):
+                    # 確認待ち2日: 前日未クロス→今日クロス
                     if prev_sma_short <= prev_sma_mid and sma_short > sma_mid:
                         buy_signals.append('GoldenCross')
                         buy_score += 1.0
@@ -268,13 +328,37 @@ class StockService:
                     buy_signals.append('PriceAboveMA25')
                     buy_score += 0.5
 
-        # BB バウンス (重み 0.5): 前日安値がBB下限以下 + 当日終値がBB下限上回り
+        # BB バウンス (重み 0.8): 前日安値がBB下限以下 + 当日終値がBB下限上回り
         if bb_lower is not None and not pd.isna(bb_lower):
             prev_low = prev.get('low')
             if prev_low is not None and not pd.isna(prev_low):
                 if prev_low <= bb_lower and current_price > bb_lower:
                     buy_signals.append('BB_Bounce')
-                    buy_score += 0.5
+                    buy_score += 0.8
+
+        # RSI 50ライン上抜け (重み 0.5): 前日RSI<50 + 当日RSI>50（トレンド転換確認）
+        if (rsi is not None and not pd.isna(rsi) and rsi > 50
+                and prev_rsi is not None and not pd.isna(prev_rsi) and prev_rsi < 50
+                and 'RSI' not in buy_signals and 'RSI_Rising' not in buy_signals):
+            buy_signals.append('RSI_Above50')
+            buy_score += 0.5
+
+        # Stochastic ゴールデンクロス (重み 1.0, 確認待ち2日): %K<=30 & 前日→今日クロス
+        if (stoch_k is not None and stoch_d is not None
+                and not pd.isna(stoch_k) and not pd.isna(stoch_d)
+                and prev_stoch_k is not None and prev_stoch_d is not None
+                and not pd.isna(prev_stoch_k) and not pd.isna(prev_stoch_d)):
+            # 確認待ち2日: 前日未クロス→今日クロス、かつ売られすぎゾーン
+            if (stoch_k <= 30 and prev_stoch_k <= prev_stoch_d and stoch_k > stoch_d):
+                buy_signals.append('Stoch_GC')
+                buy_score += 1.0
+
+        # Williams %R 買い (重み 0.5): %R<=-80から上昇
+        if (williams_r is not None and prev_williams_r is not None
+                and not pd.isna(williams_r) and not pd.isna(prev_williams_r)):
+            if prev_williams_r <= -80 and williams_r > prev_williams_r:
+                buy_signals.append('WillR_Buy')
+                buy_score += 0.5
 
         # --- 売りシグナル判定（加重スコア） ---
         sell_signals = []
@@ -284,16 +368,18 @@ class StockService:
         if rsi is not None and not pd.isna(rsi) and rsi >= settings['rsiSellThreshold']:
             sell_signals.append('RSI')
             sell_score += 1.0
-        # RSI モメンタムゾーン (重み 0.5): RSI 55-65 かつ下落中
-        elif (rsi is not None and not pd.isna(rsi) and 55 <= rsi <= 65
+        # RSI モメンタムゾーン (重み 0.7): RSI閾値-10～閾値 かつ下落中
+        elif (rsi is not None and not pd.isna(rsi)
+              and settings['rsiSellThreshold'] - 10 <= rsi < settings['rsiSellThreshold']
               and prev_rsi is not None and not pd.isna(prev_rsi) and rsi < prev_rsi):
             sell_signals.append('RSI_Falling')
-            sell_score += 0.5
+            sell_score += 0.7
 
-        # MACD クロスオーバー (重み 1.5) / ヒストグラム反転 (重み 0.8, 排他)
+        # MACD デッドクロス (重み 1.5, 確認待ち2日) / ヒストグラム反転 (重み 1.0, 排他)
         if macd_val is not None and macd_sig is not None:
             prev_macd = prev.get('macd', 0) or 0
             prev_sig = prev.get('macd_signal', 0) or 0
+            # 確認待ち2日: 前日>=→今日クロス
             if prev_macd >= prev_sig and macd_val < macd_sig:
                 sell_signals.append('MACD')
                 sell_score += 1.5
@@ -301,13 +387,14 @@ class StockService:
                   and not pd.isna(macd_histogram) and not pd.isna(prev_histogram)
                   and prev_histogram >= 0 and macd_histogram < 0):
                 sell_signals.append('MACD_Hist')
-                sell_score += 0.8
+                sell_score += 1.0
 
-        # デッドクロス (重み 1.0) / 価格-MA25クロス (重み 0.5, 排他)
+        # デッドクロス (重み 1.0, 確認待ち2日) / 価格-MA25クロス (重み 0.5, 排他)
         has_dead_cross = False
         if sma_short is not None and sma_mid is not None:
-            if prev_sma_short is not None and prev_sma_mid is not None:
-                if not pd.isna(prev_sma_short) and not pd.isna(prev_sma_mid):
+            if (prev_sma_short is not None and prev_sma_mid is not None):
+                if (not pd.isna(prev_sma_short) and not pd.isna(prev_sma_mid)):
+                    # 確認待ち2日: 前日未クロス→今日クロス
                     if prev_sma_short >= prev_sma_mid and sma_short < sma_mid:
                         sell_signals.append('DeadCross')
                         sell_score += 1.0
@@ -321,39 +408,146 @@ class StockService:
                     sell_signals.append('PriceBelowMA25')
                     sell_score += 0.5
 
-        # BB タッチ (重み 0.5): 前日高値がBB上限以上 + 当日終値がBB上限下回り
+        # BB タッチ (重み 0.8): 前日高値がBB上限以上 + 当日終値がBB上限下回り
         if bb_upper is not None and not pd.isna(bb_upper):
             prev_high = prev.get('high')
             if prev_high is not None and not pd.isna(prev_high):
                 if prev_high >= bb_upper and current_price < bb_upper:
                     sell_signals.append('BB_Touch')
-                    sell_score += 0.5
+                    sell_score += 0.8
 
-        # --- トレンドフィルター（ペナルティ方式） ---
-        TREND_PENALTY = 0.3
+        # RSI 50ライン下抜け (重み 0.5): 前日RSI>50 + 当日RSI<50（トレンド転換確認）
+        if (rsi is not None and not pd.isna(rsi) and rsi < 50
+                and prev_rsi is not None and not pd.isna(prev_rsi) and prev_rsi > 50
+                and 'RSI' not in sell_signals and 'RSI_Falling' not in sell_signals):
+            sell_signals.append('RSI_Below50')
+            sell_score += 0.5
+
+        # Stochastic デッドクロス (重み 1.0, 確認待ち2日): %K>=70 & 前日→今日クロス
+        if (stoch_k is not None and stoch_d is not None
+                and not pd.isna(stoch_k) and not pd.isna(stoch_d)
+                and prev_stoch_k is not None and prev_stoch_d is not None
+                and not pd.isna(prev_stoch_k) and not pd.isna(prev_stoch_d)):
+            # 確認待ち2日: 前日未クロス→今日クロス、かつ買われすぎゾーン
+            if (stoch_k >= 70 and prev_stoch_k >= prev_stoch_d and stoch_k < stoch_d):
+                sell_signals.append('Stoch_DC')
+                sell_score += 1.0
+
+        # Williams %R 売り (重み 0.5): %R>=-20から下降
+        if (williams_r is not None and prev_williams_r is not None
+                and not pd.isna(williams_r) and not pd.isna(prev_williams_r)):
+            if prev_williams_r >= -20 and williams_r < prev_williams_r:
+                sell_signals.append('WillR_Sell')
+                sell_score += 0.5
+
+        # --- ADXベース相場状態判定 + トレンドフィルター ---
+        has_adx = adx is not None and not pd.isna(adx)
         has_trend_data = sma_long is not None and not pd.isna(sma_long)
-        if has_trend_data:
+
+        if has_adx and has_trend_data:
+            # ADX > 25: 強いトレンド → トレンドフォロー系を重視、逆張り系をペナルティ
+            # ADX < 20: レンジ相場 → 逆張り系を重視、トレンドフォロー系をペナルティ
+            trend_follow_buy = {'MACD', 'GoldenCross', 'PriceAboveMA25', 'MACD_Hist'}
+            mean_revert_buy = {'RSI', 'RSI_Rising', 'BB_Bounce', 'Stoch_GC', 'WillR_Buy'}
+            trend_follow_sell = {'MACD', 'DeadCross', 'PriceBelowMA25', 'MACD_Hist'}
+            mean_revert_sell = {'RSI', 'RSI_Falling', 'BB_Touch', 'Stoch_DC', 'WillR_Sell'}
+
+            if adx > 40:
+                # 過熱トレンド: 全シグナルにペナルティ（トレンド終了リスク）
+                if buy_signals:
+                    buy_score *= 0.7
+                    buy_signals.append('OverheatedTrend')
+                if sell_signals:
+                    sell_score *= 0.7
+                    sell_signals.append('OverheatedTrend')
+                # カウンタートレンドはさらにペナルティ
+                if current_price < sma_long and buy_signals:
+                    buy_score *= 0.5
+                    if 'CounterTrend' not in buy_signals:
+                        buy_signals.append('CounterTrend')
+                elif current_price > sma_long and sell_signals:
+                    sell_score *= 0.5
+                    if 'CounterTrend' not in sell_signals:
+                        sell_signals.append('CounterTrend')
+            elif adx > 25:
+                # 強トレンド: 逆張り系 ×0.5、カウンタートレンド ×0.3
+                if current_price < sma_long and buy_signals:
+                    buy_score *= 0.3
+                    buy_signals.append('CounterTrend')
+                elif current_price > sma_long and sell_signals:
+                    sell_score *= 0.3
+                    sell_signals.append('CounterTrend')
+                buy_signals.append('StrongTrend')
+            elif adx < 20:
+                # レンジ相場: トレンドフォロー系 ×0.5
+                tf_buy = [s for s in buy_signals if s in trend_follow_buy]
+                tf_sell = [s for s in sell_signals if s in trend_follow_sell]
+                if tf_buy:
+                    buy_score *= 0.5
+                    buy_signals.append('RangeMarket')
+                if tf_sell:
+                    sell_score *= 0.5
+                    sell_signals.append('RangeMarket')
+            else:
+                # ADX 20-25: 中間 → 従来のカウンタートレンドペナルティ
+                if current_price < sma_long and buy_signals:
+                    buy_score *= 0.5
+                    buy_signals.append('CounterTrend')
+                elif current_price > sma_long and sell_signals:
+                    sell_score *= 0.5
+                    sell_signals.append('CounterTrend')
+        elif has_trend_data:
+            # ADXなし: 従来のペナルティ方式にフォールバック
+            TREND_PENALTY = 0.5
             if current_price < sma_long and buy_signals:
-                # 下降トレンド → 買いスコアにペナルティ
                 buy_score *= TREND_PENALTY
                 buy_signals.append('CounterTrend')
             elif current_price > sma_long and sell_signals:
-                # 上昇トレンド → 売りスコアにペナルティ
                 sell_score *= TREND_PENALTY
                 sell_signals.append('CounterTrend')
 
-        # --- 出来高確認 (重み 0.5) ---
-        # 他シグナルが存在する場合のみ加点（単独ではシグナルにならない）
-        has_vol_confirm = (
-            volume_ratio is not None and not pd.isna(volume_ratio) and volume_ratio >= 1.5
-        )
-        if has_vol_confirm:
+        # --- 出来高確認 (重み 1.0) / 出来高不足フィルター ---
+        has_vol_data = volume_ratio is not None and not pd.isna(volume_ratio)
+        if has_vol_data and volume_ratio >= 2.0:
+            # 出来高急増（ブレイクアウト確認）→ 追加ボーナス
             if buy_signals:
                 buy_signals.append('VolConfirm')
-                buy_score += 0.5
+                buy_score += 1.5
             if sell_signals:
                 sell_signals.append('VolConfirm')
-                sell_score += 0.5
+                sell_score += 1.5
+        elif has_vol_data and volume_ratio >= 1.5:
+            # 出来高増加 → シグナル信頼度向上
+            if buy_signals:
+                buy_signals.append('VolConfirm')
+                buy_score += 1.0
+            if sell_signals:
+                sell_signals.append('VolConfirm')
+                sell_score += 1.0
+        elif has_vol_data and volume_ratio < 0.7:
+            # 出来高不足 → シグナル除外（ダマシの可能性極めて高い）
+            if buy_signals:
+                buy_score = 0
+                buy_signals = ['LowVolume']
+            if sell_signals:
+                sell_score = 0
+                sell_signals = ['LowVolume']
+        elif has_vol_data and volume_ratio < 0.8:
+            # 出来高やや不足 → スコア半減
+            if buy_signals:
+                buy_score *= 0.5
+                buy_signals.append('LowVolume')
+            if sell_signals:
+                sell_score *= 0.5
+                sell_signals.append('LowVolume')
+        elif not has_vol_data:
+            # 出来高データなし → シグナル信頼性不明のためペナルティ
+            if buy_signals:
+                buy_score *= 0.5
+                buy_signals.append('NoVolData')
+            if sell_signals:
+                sell_score *= 0.5
+                sell_signals.append('NoVolData')
 
         # --- トレンド整合 (重み 0.5) ---
         if has_trend_data:
@@ -375,9 +569,9 @@ class StockService:
             active = buy_signals
             signal_score = buy_score
 
-            # ATR ベース目標価格/損切り
+            # ATR ベース目標価格/損切り (R/R比 1:2 = 5×ATR利確 / 2.5×ATR損切り)
             if atr is not None and not pd.isna(atr) and atr > 0:
-                target_price = current_price + 4 * atr
+                target_price = current_price + 5 * atr
                 stop_loss_price = current_price - 2.5 * atr
             else:
                 # フォールバック: 従来ロジック
@@ -400,10 +594,10 @@ class StockService:
             target_price = None
             stop_loss_price = None
 
-        # signal_score → signal_strength マッピング: <1.5→1, <3.0→2, >=3.0→3
-        if signal_score >= 3.0:
+        # signal_score → signal_strength マッピング: <1.0→1, <2.5→2, >=2.5→3
+        if signal_score >= 2.5:
             signal_strength = 3
-        elif signal_score >= 1.5:
+        elif signal_score >= 1.0:
             signal_strength = 2
         elif signal_score > 0:
             signal_strength = 1
@@ -522,6 +716,10 @@ class StockService:
             atr=_safe_float(latest.get('atr')),
             volume_ratio=_safe_float(latest.get('volume_ratio')),
             signal_score=details.get('signal_score'),
+            stoch_k=_safe_float(latest.get('stoch_k')),
+            stoch_d=_safe_float(latest.get('stoch_d')),
+            williams_r=_safe_float(latest.get('williams_r')),
+            adx=_safe_float(latest.get('adx')),
         )
         self.db.add(signal)
         self.db.commit()

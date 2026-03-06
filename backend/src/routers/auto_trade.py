@@ -51,7 +51,7 @@ def run_now(db: Session = Depends(get_db)):
     # 現在時間のロックを削除してから実行
     from sqlalchemy import text
     from datetime import datetime
-    lock_key = f"auto_trade_lock_{datetime.now().strftime('%Y%m%d_%H')}"
+    lock_key = f"auto_trade_lock_{datetime.now().strftime('%Y%m%d_%H%M')}"
     db.execute(text("DELETE FROM auto_trade_config WHERE key = :key"), {'key': lock_key})
     db.commit()
     service.process_auto_trades()

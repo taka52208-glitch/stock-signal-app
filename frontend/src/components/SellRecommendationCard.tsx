@@ -12,8 +12,16 @@ const SIGNAL_LABEL: Record<string, string> = {
   DeadCross: 'デッドクロス',
   PriceBelowMA25: '25日線割れ',
   BB_Touch: 'BBタッチ',
+  Stoch_DC: 'ストキャスDC',
+  WillR_Sell: 'W%R買われすぎ',
   CounterTrend: '逆トレンド',
+  StrongTrend: '強トレンド',
+  RangeMarket: 'レンジ相場',
   VolConfirm: '出来高確認',
+  RSI_Below50: 'RSI50割れ',
+  LowVolume: '出来高不足',
+  NoVolData: '出来高不明',
+  OverheatedTrend: '過熱トレンド',
   TrendAlign: 'トレンド整合',
 };
 

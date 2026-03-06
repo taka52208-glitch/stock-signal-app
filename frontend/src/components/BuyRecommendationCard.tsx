@@ -12,8 +12,16 @@ const SIGNAL_LABEL: Record<string, string> = {
   GoldenCross: 'ゴールデンクロス',
   PriceAboveMA25: '25日線突破',
   BB_Bounce: 'BBバウンス',
+  Stoch_GC: 'ストキャスGC',
+  WillR_Buy: 'W%R売られすぎ',
   CounterTrend: '逆トレンド',
+  StrongTrend: '強トレンド',
+  RangeMarket: 'レンジ相場',
   VolConfirm: '出来高確認',
+  RSI_Above50: 'RSI50超え',
+  LowVolume: '出来高不足',
+  NoVolData: '出来高不明',
+  OverheatedTrend: '過熱トレンド',
   TrendAlign: 'トレンド整合',
 };
 

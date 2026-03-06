@@ -15,13 +15,34 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
     'enabled': 'true',
-    'minSignalStrength': '1',
+    'minSignalStrength': '2',
     'maxTradesPerDay': '15',
     'orderType': 'market',
     'dryRun': 'true',
-    'takeProfitPercent': '8.0',
+    'takeProfitPercent': '10.0',
     'stopLossPercent': '-5.0',
 }
+
+# 時間帯重み: 昼休み前後は実行禁止、信頼性の高い時間帯にボーナス
+TIME_WEIGHTS = {
+    9: {0: 1.1, 30: 1.2},    # 9:00=1.1, 9:30=1.2（寄付き後トレンド確認期）
+    10: {0: 1.2, 30: 1.1},   # 10:00=1.2, 10:30=1.1（信頼性高い時間帯）
+    11: {0: 0.0, 30: 0.0},   # 11:00=0.0, 11:30=0.0（昼休み前→実行禁止）
+    12: {0: 0.0, 30: 0.7},   # 12:00=0.0（昼休み→実行禁止）, 12:30=0.7（後場寄り）
+    13: {0: 0.8, 30: 0.9},   # 13:00=0.8, 13:30=0.9
+    14: {0: 1.2, 30: 1.2},   # 14:00=1.2, 14:30=1.2（大引け前の動意、信頼性高い）
+    15: {0: 1.0, 30: 0.9},   # 15:00=1.0, 15:30=0.9
+}
+
+
+def _get_time_weight() -> float:
+    """現在時刻の時間帯重みを返す"""
+    now = datetime.now()
+    hour_weights = TIME_WEIGHTS.get(now.hour)
+    if not hour_weights:
+        return 1.0
+    minute_key = 30 if now.minute >= 30 else 0
+    return hour_weights.get(minute_key, 1.0)
 
 
 class AutoTradeService:
@@ -333,13 +354,13 @@ class AutoTradeService:
     def _acquire_lock(self) -> bool:
         """同一時間枠での重複実行を防止（DBロック）"""
         now = datetime.now()
-        lock_key = f"auto_trade_lock_{now.strftime('%Y%m%d_%H')}"
+        lock_key = f"auto_trade_lock_{now.strftime('%Y%m%d_%H%M')}"
         try:
             existing = self.db.query(AutoTradeConfig).filter(
                 AutoTradeConfig.key == lock_key
             ).first()
             if existing:
-                logger.info(f"[auto-trade] Lock exists: {lock_key} (already ran this hour)")
+                logger.info(f"[auto-trade] Lock exists: {lock_key} (already ran this slot)")
                 return False
             self.db.add(AutoTradeConfig(key=lock_key, value=now.isoformat()))
             self.db.commit()
@@ -474,22 +495,46 @@ class AutoTradeService:
                     gain_pct = ((current_price - entry_price) / entry_price) * 100
 
                     if sig_atr and sig_atr > 0:
-                        # --- ATR動的閾値 + トレーリングストップ ---
-                        atr_take_profit = entry_price + 4 * sig_atr
+                        # --- ATR動的閾値 + 3段階利確 + トレーリングストップ ---
+                        atr_take_profit = entry_price + 5 * sig_atr
                         atr_stop_loss = entry_price - 2.5 * sig_atr
                         atr_gain = current_price - entry_price
-                        atr_trailing_threshold = 2 * sig_atr  # 含み益 >= 2*ATR でトレーリング
-                        atr_breakeven_threshold = 1 * sig_atr  # 含み益 >= 1*ATR でブレークイーブン
+                        # 3段階利確閾値
+                        atr_stage1 = 2.5 * sig_atr  # 第1段階: 33%利確
+                        atr_stage2 = 3.5 * sig_atr  # 第2段階: 33%利確
+                        atr_stage3 = 5.0 * sig_atr  # 第3段階: 全量利確
+                        atr_trailing_threshold = 2 * sig_atr
+                        atr_breakeven_threshold = 2 * sig_atr
 
                         if current_price >= atr_take_profit:
-                            # ATR利確: entry + 4*ATR 到達
+                            # 第3段階: entry + 5*ATR 到達 → 全量利確
                             sell_reason = (
-                                f'ATR利確（現在値 {current_price:.0f} >= 目標 {atr_take_profit:.0f}, '
+                                f'ATR利確・第3段階（現在値 {current_price:.0f} >= 目標 {atr_take_profit:.0f}, '
                                 f'含み益 {gain_pct:.1f}%）'
                             )
+                        elif atr_gain >= atr_stage2 and hold_qty >= 3:
+                            # 第2段階: 含み益 >= 3.5*ATR → 33%利確
+                            partial_qty = hold_qty // 3
+                            if partial_qty > 0:
+                                sell_reason = (
+                                    f'段階的利確・第2段階（含み益 {gain_pct:.1f}%, '
+                                    f'{atr_gain:.0f} >= 3.5×ATR {atr_stage2:.0f}, '
+                                    f'{partial_qty}/{hold_qty}株売却）'
+                                )
+                                hold_qty = partial_qty
+                        elif atr_gain >= atr_stage1 and hold_qty >= 3:
+                            # 第1段階: 含み益 >= 2.5*ATR → 33%利確 + ブレイクイーブン移行
+                            partial_qty = hold_qty // 3
+                            if partial_qty > 0:
+                                sell_reason = (
+                                    f'段階的利確・第1段階（含み益 {gain_pct:.1f}%, '
+                                    f'{atr_gain:.0f} >= 2.5×ATR {atr_stage1:.0f}, '
+                                    f'{partial_qty}/{hold_qty}株売却→残りブレイクイーブン）'
+                                )
+                                hold_qty = partial_qty
                         elif atr_gain >= atr_trailing_threshold:
                             # トレーリングストップ: 含み益 >= 2*ATR → current - 1*ATR を下回ったら売り
-                            trailing_stop = current_price - sig_atr
+                            trailing_stop = current_price - 1.5 * sig_atr
                             recent_prices = self.db.query(StockPrice).filter(
                                 StockPrice.code == code
                             ).order_by(StockPrice.date.desc()).limit(2).all()
@@ -506,7 +551,7 @@ class AutoTradeService:
                                     f'取得単価 {entry_price:.0f}）'
                                 )
                         elif current_price <= atr_stop_loss:
-                            # ATR損切り: entry - 2*ATR
+                            # ATR損切り: entry - 2.5*ATR
                             sell_reason = (
                                 f'ATR損切り（現在値 {current_price:.0f} <= 損切り {atr_stop_loss:.0f}, '
                                 f'含み損 {gain_pct:.1f}%）'
@@ -604,8 +649,19 @@ class AutoTradeService:
                 )
                 continue
 
-            # b. シグナル強度チェック
-            strength = latest_signal.signal_strength or 0
+            # b. 時間帯重み適用 + シグナル強度チェック
+            time_weight = _get_time_weight()
+            raw_score = latest_signal.signal_score or 0
+            adjusted_score = raw_score * time_weight
+            # 調整後スコアで強度を再計算
+            if adjusted_score >= 2.5:
+                strength = 3
+            elif adjusted_score >= 1.0:
+                strength = 2
+            elif adjusted_score > 0:
+                strength = 1
+            else:
+                strength = latest_signal.signal_strength or 0
             if strength < config['minSignalStrength']:
                 self._add_log(
                     code=code,

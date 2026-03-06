@@ -11,8 +11,8 @@ class Settings(BaseSettings):
     mock_mode: bool = os.getenv('MOCK_MODE', 'false').lower() == 'true'
 
     # シグナル判定デフォルト値
-    rsi_buy_threshold: int = 35
-    rsi_sell_threshold: int = 65
+    rsi_buy_threshold: int = 40
+    rsi_sell_threshold: int = 60
     sma_short_period: int = 5
     sma_mid_period: int = 25
     sma_long_period: int = 75

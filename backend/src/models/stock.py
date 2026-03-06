@@ -51,6 +51,10 @@ class Signal(Base):
     atr = Column(Float, nullable=True)            # ATR(14)
     volume_ratio = Column(Float, nullable=True)   # 出来高 / 20日平均出来高
     signal_score = Column(Float, nullable=True)   # 加重スコア (0.0-5.0)
+    stoch_k = Column(Float, nullable=True)        # ストキャスティクス %K
+    stoch_d = Column(Float, nullable=True)        # ストキャスティクス %D
+    williams_r = Column(Float, nullable=True)     # ウィリアムズ %R
+    adx = Column(Float, nullable=True)            # ADX(14) トレンド強度
 
 
 class Setting(Base):

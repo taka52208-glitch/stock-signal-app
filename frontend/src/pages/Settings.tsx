@@ -20,12 +20,12 @@ import { api } from '../api/client';
 import type { Settings as SettingsType } from '../types';
 
 const DEFAULT_SETTINGS: SettingsType = {
-  rsiBuyThreshold: 30,
-  rsiSellThreshold: 70,
+  rsiBuyThreshold: 40,
+  rsiSellThreshold: 60,
   smaShortPeriod: 5,
   smaMidPeriod: 25,
   smaLongPeriod: 75,
-  investmentBudget: 100000,
+  investmentBudget: 1000000,
 };
 
 const BUDGET_PRESETS = [50000, 100000, 300000, 500000, 1000000];
