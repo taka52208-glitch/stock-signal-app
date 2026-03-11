@@ -5,9 +5,9 @@ from src.models.stock import RiskRule, Stock, StockPrice, Signal, Transaction
 
 DEFAULT_RISK_RULES = {
     'maxPositionPercent': '40',       # 1銘柄最大ポートフォリオ比率(%)
-    'maxLossPerTrade': '15',          # 1取引最大損失率(%)
-    'maxPortfolioLoss': '10',         # ポートフォリオ最大損失率(%)
-    'maxOpenPositions': '5',          # 最大保有銘柄数（1銘柄20万円）
+    'maxLossPerTrade': '20',          # 1取引最大損失率(%)
+    'maxPortfolioLoss': '15',         # ポートフォリオ最大損失率(%)
+    'maxOpenPositions': '8',          # 最大保有銘柄数（1銘柄12.5万円）
 }
 
 

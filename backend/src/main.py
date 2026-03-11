@@ -357,6 +357,33 @@ async def lifespan(app: FastAPI):
                 logger.debug(f"[migration/phase25] {table}.{key} skip: {e}")
         conn.commit()
 
+    # Phase 26 マイグレーション: 取引実行率・利益率の改善
+    phase26_upgrades = [
+        # minSignalStrength: 2→1（強度1の成功率31%を活用、強度3は0%で逆効果）
+        ('auto_trade_config', 'key', 'value', 'minSignalStrength', '2', '1'),
+        # maxOpenPositions: 5→8（保有上限拒否46件を解消）
+        ('risk_rules', 'key', 'value', 'maxOpenPositions', '5', '8'),
+        # maxLossPerTrade: 15→20（ATR損切り距離に適合、拒否44件を解消）
+        ('risk_rules', 'key', 'value', 'maxLossPerTrade', '15', '20'),
+        # maxPortfolioLoss: 10→15（ポートフォリオ損失許容拡大）
+        ('risk_rules', 'key', 'value', 'maxPortfolioLoss', '10', '15'),
+        # maxTradesPerDay: 3→15（DBに古い値が残っているケース対応）
+        ('auto_trade_config', 'key', 'value', 'maxTradesPerDay', '3', '15'),
+    ]
+    with engine.connect() as conn:
+        for table, key_col, val_col, key, old_val, new_val in phase26_upgrades:
+            try:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET {val_col} = :new_val "
+                    f"WHERE {key_col} = :key AND {val_col} = :old_val"
+                ), {'new_val': new_val, 'old_val': old_val, 'key': key})
+                if result.rowcount > 0:
+                    logger.info(f"[migration/phase26] {table}.{key}: {old_val} → {new_val}")
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"[migration/phase26] {table}.{key} skip: {e}")
+        conn.commit()
+
     # 依存ライブラリチェック
     for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:
         try:

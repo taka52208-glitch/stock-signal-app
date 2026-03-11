@@ -13,7 +13,7 @@ import type { AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog } from '../ty
 
 const DEFAULT_CONFIG: AutoTradeConfig = {
   enabled: true,
-  minSignalStrength: 2,
+  minSignalStrength: 1,
   maxTradesPerDay: 15,
   orderType: 'market',
   dryRun: true,

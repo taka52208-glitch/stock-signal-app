@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
     'enabled': 'true',
-    'minSignalStrength': '2',
+    'minSignalStrength': '1',
     'maxTradesPerDay': '15',
     'orderType': 'market',
     'dryRun': 'true',
@@ -497,14 +497,14 @@ class AutoTradeService:
                     if sig_atr and sig_atr > 0:
                         # --- ATR動的閾値 + 3段階利確 + トレーリングストップ ---
                         atr_take_profit = entry_price + 5 * sig_atr
-                        atr_stop_loss = entry_price - 2.5 * sig_atr
+                        atr_stop_loss = entry_price - 3 * sig_atr
                         atr_gain = current_price - entry_price
                         # 3段階利確閾値
-                        atr_stage1 = 2.5 * sig_atr  # 第1段階: 33%利確
-                        atr_stage2 = 3.5 * sig_atr  # 第2段階: 33%利確
+                        atr_stage1 = 2.0 * sig_atr  # 第1段階: 33%利確
+                        atr_stage2 = 3.0 * sig_atr  # 第2段階: 33%利確
                         atr_stage3 = 5.0 * sig_atr  # 第3段階: 全量利確
-                        atr_trailing_threshold = 2 * sig_atr
-                        atr_breakeven_threshold = 2 * sig_atr
+                        atr_trailing_threshold = 1.5 * sig_atr
+                        atr_breakeven_threshold = 1.5 * sig_atr
 
                         if current_price >= atr_take_profit:
                             # 第3段階: entry + 5*ATR 到達 → 全量利確
@@ -512,7 +512,7 @@ class AutoTradeService:
                                 f'ATR利確・第3段階（現在値 {current_price:.0f} >= 目標 {atr_take_profit:.0f}, '
                                 f'含み益 {gain_pct:.1f}%）'
                             )
-                        elif atr_gain >= atr_stage2 and hold_qty >= 3:
+                        elif atr_gain >= atr_stage2 and hold_qty >= 2:
                             # 第2段階: 含み益 >= 3.5*ATR → 33%利確
                             partial_qty = hold_qty // 3
                             if partial_qty > 0:
@@ -522,7 +522,7 @@ class AutoTradeService:
                                     f'{partial_qty}/{hold_qty}株売却）'
                                 )
                                 hold_qty = partial_qty
-                        elif atr_gain >= atr_stage1 and hold_qty >= 3:
+                        elif atr_gain >= atr_stage1 and hold_qty >= 2:
                             # 第1段階: 含み益 >= 2.5*ATR → 33%利確 + ブレイクイーブン移行
                             partial_qty = hold_qty // 3
                             if partial_qty > 0:

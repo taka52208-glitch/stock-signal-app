@@ -10,10 +10,10 @@ import { api } from '../api/client';
 import type { RiskRules } from '../types';
 
 const DEFAULT_RULES: RiskRules = {
-  maxPositionPercent: 30,
-  maxLossPerTrade: 5,
-  maxPortfolioLoss: 10,
-  maxOpenPositions: 5,
+  maxPositionPercent: 40,
+  maxLossPerTrade: 20,
+  maxPortfolioLoss: 15,
+  maxOpenPositions: 8,
 };
 
 export default function RiskSettings() {
@@ -110,7 +110,7 @@ export default function RiskSettings() {
               value={rules.maxLossPerTrade}
               onChange={(_, v) => setRules({ ...rules, maxLossPerTrade: v as number })}
               min={1}
-              max={20}
+              max={25}
               step={1}
               marks
               valueLabelDisplay="auto"
