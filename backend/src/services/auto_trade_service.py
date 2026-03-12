@@ -496,15 +496,15 @@ class AutoTradeService:
 
                     if sig_atr and sig_atr > 0:
                         # --- ATR動的閾値 + 3段階利確 + トレーリングストップ ---
-                        atr_take_profit = entry_price + 5 * sig_atr
-                        atr_stop_loss = entry_price - 3 * sig_atr
+                        atr_take_profit = entry_price + 4 * sig_atr
+                        atr_stop_loss = entry_price - 2 * sig_atr
                         atr_gain = current_price - entry_price
                         # 3段階利確閾値
-                        atr_stage1 = 2.0 * sig_atr  # 第1段階: 33%利確
-                        atr_stage2 = 3.0 * sig_atr  # 第2段階: 33%利確
-                        atr_stage3 = 5.0 * sig_atr  # 第3段階: 全量利確
-                        atr_trailing_threshold = 1.5 * sig_atr
-                        atr_breakeven_threshold = 1.5 * sig_atr
+                        atr_stage1 = 1.5 * sig_atr  # 第1段階: 33%利確
+                        atr_stage2 = 2.5 * sig_atr  # 第2段階: 33%利確
+                        atr_stage3 = 4.0 * sig_atr  # 第3段階: 全量利確
+                        atr_trailing_threshold = 2.5 * sig_atr
+                        atr_breakeven_threshold = 3.0 * sig_atr
 
                         if current_price >= atr_take_profit:
                             # 第3段階: entry + 5*ATR 到達 → 全量利確
@@ -512,29 +512,49 @@ class AutoTradeService:
                                 f'ATR利確・第3段階（現在値 {current_price:.0f} >= 目標 {atr_take_profit:.0f}, '
                                 f'含み益 {gain_pct:.1f}%）'
                             )
-                        elif atr_gain >= atr_stage2 and hold_qty >= 2:
-                            # 第2段階: 含み益 >= 3.5*ATR → 33%利確
-                            partial_qty = hold_qty // 3
-                            if partial_qty > 0:
+                        elif atr_gain >= atr_stage2:
+                            # 第2段階: 含み益 >= 2.5*ATR → 33%利確（最低1株）
+                            partial_qty = max(hold_qty // 3, 1)
+                            if partial_qty < hold_qty:
                                 sell_reason = (
                                     f'段階的利確・第2段階（含み益 {gain_pct:.1f}%, '
-                                    f'{atr_gain:.0f} >= 3.5×ATR {atr_stage2:.0f}, '
+                                    f'{atr_gain:.0f} >= 2.5×ATR {atr_stage2:.0f}, '
                                     f'{partial_qty}/{hold_qty}株売却）'
                                 )
                                 hold_qty = partial_qty
-                        elif atr_gain >= atr_stage1 and hold_qty >= 2:
-                            # 第1段階: 含み益 >= 2.5*ATR → 33%利確 + ブレイクイーブン移行
-                            partial_qty = hold_qty // 3
-                            if partial_qty > 0:
+                            else:
+                                sell_reason = (
+                                    f'段階的利確・第2段階（含み益 {gain_pct:.1f}%, '
+                                    f'{atr_gain:.0f} >= 2.5×ATR {atr_stage2:.0f}, '
+                                    f'全{hold_qty}株売却）'
+                                )
+                        elif atr_gain >= atr_stage1:
+                            # 第1段階: 含み益 >= 1.5*ATR → 33%利確（最低1株）
+                            partial_qty = max(hold_qty // 3, 1)
+                            if partial_qty < hold_qty:
                                 sell_reason = (
                                     f'段階的利確・第1段階（含み益 {gain_pct:.1f}%, '
-                                    f'{atr_gain:.0f} >= 2.5×ATR {atr_stage1:.0f}, '
-                                    f'{partial_qty}/{hold_qty}株売却→残りブレイクイーブン）'
+                                    f'{atr_gain:.0f} >= 1.5×ATR {atr_stage1:.0f}, '
+                                    f'{partial_qty}/{hold_qty}株売却→残りトレーリング）'
                                 )
                                 hold_qty = partial_qty
+                            else:
+                                sell_reason = (
+                                    f'段階的利確・第1段階（含み益 {gain_pct:.1f}%, '
+                                    f'{atr_gain:.0f} >= 1.5×ATR {atr_stage1:.0f}, '
+                                    f'全{hold_qty}株売却）'
+                                )
+
+                        elif atr_gain >= atr_breakeven_threshold:
+                            # ブレークイーブンストップ: 含み益 >= 3*ATR到達後、entry価格まで戻ったら売り
+                            if current_price <= entry_price:
+                                sell_reason = (
+                                    f'ブレークイーブンストップ（現在値 {current_price:.0f} <= '
+                                    f'取得単価 {entry_price:.0f}）'
+                                )
                         elif atr_gain >= atr_trailing_threshold:
-                            # トレーリングストップ: 含み益 >= 2*ATR → current - 1*ATR を下回ったら売り
-                            trailing_stop = current_price - 1.5 * sig_atr
+                            # トレーリングストップ: 含み益 >= 2.5*ATR → current - 2*ATR を下回ったら売り
+                            trailing_stop = current_price - 2.0 * sig_atr
                             recent_prices = self.db.query(StockPrice).filter(
                                 StockPrice.code == code
                             ).order_by(StockPrice.date.desc()).limit(2).all()
@@ -542,13 +562,6 @@ class AutoTradeService:
                                 sell_reason = (
                                     f'トレーリングストップ（安値 {recent_prices[0].low:.0f} <= '
                                     f'トレーリング {trailing_stop:.0f}, 含み益 {gain_pct:.1f}%）'
-                                )
-                        elif atr_gain >= atr_breakeven_threshold:
-                            # ブレークイーブンストップ: 含み益 >= 1*ATR → entry価格まで戻ったら売り
-                            if current_price <= entry_price:
-                                sell_reason = (
-                                    f'ブレークイーブンストップ（現在値 {current_price:.0f} <= '
-                                    f'取得単価 {entry_price:.0f}）'
                                 )
                         elif current_price <= atr_stop_loss:
                             # ATR損切り: entry - 2.5*ATR

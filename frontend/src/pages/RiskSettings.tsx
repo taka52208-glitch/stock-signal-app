@@ -10,9 +10,9 @@ import { api } from '../api/client';
 import type { RiskRules } from '../types';
 
 const DEFAULT_RULES: RiskRules = {
-  maxPositionPercent: 40,
-  maxLossPerTrade: 20,
-  maxPortfolioLoss: 15,
+  maxPositionPercent: 50,
+  maxLossPerTrade: 10,
+  maxPortfolioLoss: 20,
   maxOpenPositions: 8,
 };
 

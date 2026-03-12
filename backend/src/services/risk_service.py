@@ -4,9 +4,9 @@ from src.models.stock import RiskRule, Stock, StockPrice, Signal, Transaction
 
 
 DEFAULT_RISK_RULES = {
-    'maxPositionPercent': '40',       # 1銘柄最大ポートフォリオ比率(%)
-    'maxLossPerTrade': '20',          # 1取引最大損失率(%)
-    'maxPortfolioLoss': '15',         # ポートフォリオ最大損失率(%)
+    'maxPositionPercent': '50',       # 1銘柄最大ポートフォリオ比率(%)
+    'maxLossPerTrade': '10',          # 1取引最大損失率(%) - ATR 2×ATR損切りに整合
+    'maxPortfolioLoss': '20',         # ポートフォリオ最大損失率(%)
     'maxOpenPositions': '8',          # 最大保有銘柄数（1銘柄12.5万円）
 }
 
@@ -79,7 +79,7 @@ class RiskService:
                 })
                 passed = False
 
-            # ポジション比率チェック
+            # ポジション比率チェック（空ポートフォリオ時はスキップ: 最初の取引は必ず100%になるため）
             if total_value > 0:
                 position_pct = (trade_amount / (total_value + trade_amount)) * 100
                 if position_pct > rules['maxPositionPercent']:

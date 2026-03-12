@@ -384,6 +384,29 @@ async def lifespan(app: FastAPI):
                 logger.debug(f"[migration/phase26] {table}.{key} skip: {e}")
         conn.commit()
 
+    # Phase 27 マイグレーション: R/R比改善 + リスクルール適正化
+    phase27_upgrades = [
+        # maxLossPerTrade: 20→10（ATR 2×ATR損切りに整合）
+        ('risk_rules', 'key', 'value', 'maxLossPerTrade', '20', '10'),
+        # maxPositionPercent: 40→50（空ポートフォリオ拒否を緩和）
+        ('risk_rules', 'key', 'value', 'maxPositionPercent', '40', '50'),
+        # maxPortfolioLoss: 15→20（損失許容を緩和し早期停止を防止）
+        ('risk_rules', 'key', 'value', 'maxPortfolioLoss', '15', '20'),
+    ]
+    with engine.connect() as conn:
+        for table, key_col, val_col, key, old_val, new_val in phase27_upgrades:
+            try:
+                result = conn.execute(text(
+                    f"UPDATE {table} SET {val_col} = :new_val "
+                    f"WHERE {key_col} = :key AND {val_col} = :old_val"
+                ), {'new_val': new_val, 'old_val': old_val, 'key': key})
+                if result.rowcount > 0:
+                    logger.info(f"[migration/phase27] {table}.{key}: {old_val} → {new_val}")
+            except Exception as e:
+                conn.rollback()
+                logger.debug(f"[migration/phase27] {table}.{key} skip: {e}")
+        conn.commit()
+
     # 依存ライブラリチェック
     for lib in ['yfinance', 'pandas_ta', 'curl_cffi']:
         try:

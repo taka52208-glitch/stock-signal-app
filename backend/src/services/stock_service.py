@@ -569,10 +569,10 @@ class StockService:
             active = buy_signals
             signal_score = buy_score
 
-            # ATR ベース目標価格/損切り (R/R比 5:3 = 5×ATR利確 / 3×ATR損切り)
+            # ATR ベース目標価格/損切り (R/R比 2:1 = 4×ATR利確 / 2×ATR損切り)
             if atr is not None and not pd.isna(atr) and atr > 0:
-                target_price = current_price + 5 * atr
-                stop_loss_price = current_price - 3 * atr
+                target_price = current_price + 4 * atr
+                stop_loss_price = current_price - 2 * atr
             else:
                 # フォールバック: 従来ロジック
                 candidates = [resistance_price]
