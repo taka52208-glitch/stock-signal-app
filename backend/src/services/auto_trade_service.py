@@ -475,15 +475,17 @@ class AutoTradeService:
                 continue
             current_price = latest_price.close
 
-            # a.2 holdシグナル → 自動利確・損切りチェック（ATR動的閾値 + トレーリングストップ）
-            if latest_signal.signal_type == 'hold':
-                if config['dryRun']:
-                    entry_price = self._get_dry_run_entry_price(code)
-                    hold_qty = self._get_dry_run_holding_quantity(code)
-                else:
-                    entry_price = self._get_entry_price(code)
-                    hold_qty = self._get_holding_quantity(code)
+            # a.2 保有中 → シグナル種別に関係なく自動利確・損切りチェック（ATR動的閾値 + トレーリングストップ）
+            # BUG FIX: 以前は hold シグナル限定だったため、株価下落→RSI低下→buyシグナル発生時に
+            # 損切りチェックがバイパスされていた。全シグナルで保有チェックを実行する。
+            if config['dryRun']:
+                entry_price = self._get_dry_run_entry_price(code)
+                hold_qty = self._get_dry_run_holding_quantity(code)
+            else:
+                entry_price = self._get_entry_price(code)
+                hold_qty = self._get_holding_quantity(code)
 
+            if hold_qty > 0:
                 take_profit_pct = config['takeProfitPercent']
                 stop_loss_pct = config['stopLossPercent']
                 sell_reason = None
@@ -587,6 +589,11 @@ class AutoTradeService:
 
                 if sell_reason and hold_qty > 0:
                     # 利確・損切り売り実行
+                    logger.info(
+                        f"[auto-trade] {code}: EXIT {sell_reason} "
+                        f"(signal={latest_signal.signal_type}, entry={entry_price:.0f}, "
+                        f"current={current_price:.0f}, qty={hold_qty})"
+                    )
                     if config['dryRun']:
                         self._add_log(
                             code=code,
@@ -645,11 +652,44 @@ class AutoTradeService:
                             )
                     continue
 
-                # 利確・損切り対象外 → ログのみ
-                msg = 'holdシグナル（様子見）'
-                if entry_price and current_price > 0 and hold_qty > 0:
-                    gain_pct = ((current_price - entry_price) / entry_price) * 100
-                    msg = f'holdシグナル（含み益 {gain_pct:.1f}%）'
+                # イグジット未発動 → 保有状況ログ出力
+                gain_pct = ((current_price - entry_price) / entry_price) * 100 if entry_price else 0
+                atr_info = ''
+                if sig_atr and sig_atr > 0 and entry_price:
+                    atr_sl = entry_price - 2 * sig_atr
+                    atr_tp = entry_price + 4 * sig_atr
+                    atr_info = f', ATR={sig_atr:.0f}, SL={atr_sl:.0f}, TP={atr_tp:.0f}'
+                entry_str = f'{entry_price:.0f}' if entry_price else 'N/A'
+                logger.info(
+                    f"[auto-trade] {code}: HOLD (signal={latest_signal.signal_type}, "
+                    f"entry={entry_str}, current={current_price:.0f}, "
+                    f"gain={gain_pct:+.1f}%, qty={hold_qty}{atr_info})"
+                )
+
+                # holdシグナルなら様子見ログ、buy/sellシグナルなら保有中スキップ
+                if latest_signal.signal_type == 'hold':
+                    msg = f'holdシグナル（含み益 {gain_pct:+.1f}%）'
+                elif latest_signal.signal_type == 'buy':
+                    msg = f'既に保有中（{hold_qty}株, 含み益 {gain_pct:+.1f}%）'
+                else:
+                    # sellシグナルだがイグジット条件未達 → 通常sell処理へ進む
+                    pass
+
+                if latest_signal.signal_type in ('hold', 'buy'):
+                    self._add_log(
+                        code=code,
+                        signal_type=latest_signal.signal_type,
+                        signal_strength=latest_signal.signal_strength or 0,
+                        active_signals=latest_signal.active_signals,
+                        order_price=current_price,
+                        result_status='skipped',
+                        result_message=msg,
+                        dry_run=config['dryRun'],
+                    )
+                    continue
+                # sellシグナルの場合はイグジット未発動でも通常sell処理に進む
+            elif latest_signal.signal_type == 'hold':
+                # 未保有 + holdシグナル → 何もしない
                 self._add_log(
                     code=code,
                     signal_type='hold',
@@ -657,7 +697,7 @@ class AutoTradeService:
                     active_signals=latest_signal.active_signals,
                     order_price=current_price,
                     result_status='skipped',
-                    result_message=msg,
+                    result_message='holdシグナル（様子見）',
                     dry_run=config['dryRun'],
                 )
                 continue
@@ -754,6 +794,12 @@ class AutoTradeService:
             ]
 
             if not risk_result['passed']:
+                warn_msgs = [w['message'] for w in risk_warnings]
+                logger.info(
+                    f"[auto-trade] {code}: RISK_BLOCKED {latest_signal.signal_type} "
+                    f"(strength={strength}, price={current_price:.0f}, qty={quantity}, "
+                    f"reasons={warn_msgs})"
+                )
                 self._add_log(
                     code=code,
                     signal_type=latest_signal.signal_type,
@@ -772,6 +818,11 @@ class AutoTradeService:
 
             # e. ドライラン
             if config['dryRun']:
+                logger.info(
+                    f"[auto-trade] {code}: EXECUTE {latest_signal.signal_type} "
+                    f"(strength={strength}, price={current_price:.0f}, qty={quantity}, "
+                    f"signals={latest_signal.active_signals})"
+                )
                 self._add_log(
                     code=code,
                     signal_type=latest_signal.signal_type,
