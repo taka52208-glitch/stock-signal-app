@@ -1,5 +1,72 @@
 # スコープ進捗管理
 
+## 現在のステータス（2026-05-01 時点）
+
+| 項目 | 状態 |
+|------|------|
+| 最終フェーズ | Phase 31（kabu STATION API自動リトライ） |
+| 最終コミット | 2026-04-23 |
+| フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
+| バックエンド | Render稼働中（stock-signal-api-u9al.onrender.com） |
+| ローカルバックエンド | **systemdサービス常時稼働（stock-backend.service）** |
+| DB | Neon PostgreSQL稼働中 |
+| 自動売買 | **実資金モード（dryRun=false）** |
+| 証券口座残高 | 100,187円（2026-04-29確認、実取引まだ0件） |
+| 全ページ | 11ページ完了 |
+| 全API | 44エンドポイント完了 |
+
+### 実資金運用の問題と対応（2026-05-01）
+- **問題**: 4/28にdryRun=falseに切り替えたが、バックエンドが4/28 13:43以降停止しており実取引が一度も実行されなかった
+- **原因**: nohupで手動起動していたため、プロセス終了後に自動復旧されなかった
+- **対応（Phase 30）**: systemdユーザーサービス化（Restart=always + enable-linger）で自動復旧を保証
+
+### ドライラン実績（Render上、3/13〜4/28、累計255取引）
+- 確定損益: +¥15,343 / 含み損益: +¥20,054 / **トータル: +¥35,397（+5.04%）**
+- 保有8銘柄: TDK(+13.3%), 信越化学(+8.6%), 味の素(+5.5%), LINEヤフー(+5.6%), 伊藤忠(+1.5%), ブリヂストン(+1.0%), 資生堂(-0.2%), NTT(-0.8%)
+- ※4/20時点の+49,997円(+9.58%)から直近の相場変動で含み益縮小
+
+### 実資金運用設定
+| 項目 | 値 |
+|------|-----|
+| dryRun | false（実資金） |
+| enabled | true |
+| investmentBudget | 100,000円 |
+| minSignalStrength | 1 |
+| maxTradesPerDay | 15回/日 |
+| orderType | market（成行） |
+| takeProfitPercent | 10% |
+| stopLossPercent | -5% |
+
+### 実資金移行ステータス — 全完了
+- [x] 入金反映済み（1,000円、買付可能額1,000円）
+- [x] ランド(8918) 1株 11円でプチ株買注文済み（2026-04-21）
+- [x] 約定済み（2026-04-22、三菱より約定通知受領）
+- [x] 投資経験を「株式現物取引: 1年未満」に更新（2026-04-26）
+- [x] 信用取引口座の開設申込（2026-04-26）
+- [x] 信用取引口座の開設完了確認（2026-04-27）
+- [x] Professional昇格確認（2026-04-28確認済み）
+- [x] kabuステーションAPI申込・有効化確認（2026-04-28）
+- [x] 接続テスト — WSL→kabu STATION接続成功（2026-04-28）
+  - localhostForwarding=true でWSL→localhost:18080転送が安定動作
+  - DB設定をhost=localhost, apiPassword=本番用に更新
+- [x] dryRun=false切替（2026-04-28）
+- [x] 証券口座への入金（100,000円、三菱UFJ即時入金、2026-04-29）
+- [x] 残高確認（100,187円、API経由で確認済み）
+- [x] バックエンドsystemdサービス化（2026-05-01、Phase 30）
+- 初回実稼働: **2026-05-02(金) 9:30**（4/29祝日、4/30-5/1バックエンド停止のため未実行）
+- Windowsファイアウォールルール追加済み（WSL→18080/18081ポート許可）
+- 起動時マイグレーションの上書きバグ修正済み（Phase 26 minSignalStrength/maxTradesPerDay, Phase 20 investmentBudget）
+
+### 直近の主要改善履歴
+- Phase 31（5/1）: kabu STATION API自動リトライ（401時にトークン再取得×3回）
+- Phase 30（5/1）: バックエンド常時稼働化（systemd Restart=always + enable-linger）
+- Phase 26-28（3/9〜3/13）: 取引実行率・R/R比改善、損切りバイパスの重大バグ修正
+- 現在のR/R比: 2:1（ATR利確4×ATR / ATR損切り2×ATR）
+- 段階利確: 3段階（1.5×/2.5×/4.0×ATR）
+- 損切りチェック: 全シグナルで発動（Phase 28バグ修正済み）
+
+---
+
 ## フェーズ進捗
 
 - [x] Phase 1: 要件定義
@@ -7,7 +74,7 @@
 - [x] Phase 3: フロントエンド基盤
 - [x] Phase 4: バックエンド基盤
 - [x] Phase 5: 機能実装
-- [ ] Phase 6: テスト・デプロイ（デプロイ済み、テスト未実装）
+- [x] Phase 6: テスト・デプロイ（デプロイ済み、テスト実装済み）
 - [x] Phase 7: アラート機能
 - [x] Phase 8: リスク管理機能
 - [x] Phase 9: バックテスト機能
@@ -30,6 +97,9 @@
 - [x] Phase 26: 取引実行率・利益率の根本改善
 - [x] Phase 27: R/R比改善・イグジットロジック根本修正
 - [x] Phase 28: 損切りバイパスバグ修正・ログ詳細化
+- [x] Phase 29: テスト実装・Rate Limit
+- [x] Phase 30: バックエンド常時稼働化・再発防止
+- [x] Phase 31: kabu STATION API自動リトライ
 
 ---
 
@@ -152,7 +222,7 @@
 - [x] 定期更新スケジューラ（09:30〜15:30の30分ごと + アラート・自動売買連動 + watchdog復帰対策）
 - [x] CORS設定（Vercelサブドメイン正規表現対応）
 - [x] グレースフルシャットダウン（SIGTERM対応）
-- [ ] Rate Limit（未実装）
+- [x] Rate Limit（slowapi: 60リクエスト/分/IP）
 - [x] 簡易マイグレーション（起動時ALTER TABLEによる列追加・エラーログ・検証付き）
 - [ ] データベースマイグレーション（Alembic未導入、`create_all`+ALTER TABLEで代用）
 
@@ -161,14 +231,15 @@
 - [x] バックエンド（常時稼働）: Render（`render.yaml` + `stock-signal-api-u9al.onrender.com`）
 - [x] バックエンド（ローカル）: cloudflaredトンネル経由（証券会社API連携用）
 - [x] DB: Neon PostgreSQL（常時稼働）
-- [x] PC起動時自動起動（systemd + WSL自動起動）
+- [x] PC起動時自動起動（systemd + WSL自動起動 + enable-linger）
 - [x] 起動スクリプト（`start.sh` - バックエンド+トンネル一括起動・URL自動登録・バイナリログ対応）
+- [x] ローカルバックエンド常時稼働（systemd `stock-backend.service` Restart=always）
 - [x] WSLスリープ復帰対策（5分間隔watchdog + 起動時キャッチアップ）
 - [ ] CI/CDパイプライン（未構築）
 
 ### テスト
-- [ ] フロントエンドテスト（未実装）
-- [ ] バックエンドテスト（未実装）
+- [x] バックエンドテスト（pytest: 73テスト — サービス層ユニットテスト + API統合テスト）
+- [x] フロントエンドテスト（vitest: 13テスト — コンポーネントテスト）
 
 ---
 
@@ -176,13 +247,13 @@
 
 | 項目 | 優先度 | 備考 |
 |------|--------|------|
-| テスト実装（フロント/バック） | 中 | テストフレームワーク未導入 |
-| Rate Limit | 中 | 要件定義では1分60リクエスト |
+| ~~テスト実装（フロント/バック）~~ | ~~中~~ 済 | ~~テストフレームワーク未導入~~ Phase 29で実装済み（pytest 73件 + vitest 13件） |
+| ~~Rate Limit~~ | ~~中~~ 済 | ~~要件定義では1分60リクエスト~~ Phase 29でslowapi導入済み |
 | Alembicマイグレーション | 低 | 現状`create_all`+ALTER TABLEで動作中 |
 | CI/CDパイプライン | 低 | 現状は手動デプロイ |
 | カスタムフック分離 | 低 | 現状はページ内にインライン |
 | Cloudflare Named Tunnel | 低 | 現状Quick Tunnel（URL変動）で運用中。ドメイン取得で固定URL化可能 |
-| バックエンドプロセス監視 | ~~中~~ 済 | ~~start.shでuvicornが落ちても再起動されない~~ watchdog実装済み |
+| バックエンドプロセス監視 | ~~中~~ 済 | ~~start.shでuvicornが落ちても再起動されない~~ watchdog実装済み + systemd Restart=always（Phase 30） |
 | ~~investmentBudget増額~~ | ~~低~~ 済 | ~~現在50,000円~~ Phase 20で1,000,000円に増額済み |
 
 ---
@@ -548,3 +619,91 @@
 - ATR損切り（2×ATR）が全シグナルで正しく発動し、含み損放置を防止
 - 段階利確・トレーリング・ブレイクイーブンも同様にbuy/sellシグナル中でも発動
 - ログにentry/current/gain%/ATR値が出力され、翌日以降の判断根拠が追跡可能
+
+---
+
+## Phase 29: テスト実装・Rate Limit（2026-04-23）
+
+### 対応内容
+
+#### バックエンドテスト（pytest: 73テスト）
+1. **テスト基盤**: pytest + pytest-asyncio、SQLiteインメモリDB（StaticPool）、lifespan除外テスト用FastAPIアプリ
+2. **StockServiceテスト（20件）**: テクニカル指標計算（RSI/MACD/SMA/BB/ATR/Stoch/WillR/ADX）、シグナル判定ロジック、設定CRUD、銘柄CRUD
+3. **RiskServiceテスト（10件）**: リスクルールCRUD、取引リスク評価（初回取引/最大保有数/損失率）、チェックリスト、価格提案
+4. **AutoTradeServiceテスト（15件）**: 設定CRUD、銘柄別設定、ログ取得、保有数量計算、平均取得単価、時間帯重み
+5. **API統合テスト（27件）**: stocks/settings/transactions/risk/auto-trade/alertsの主要エンドポイント
+
+#### フロントエンドテスト（vitest: 13テスト）
+1. **テスト基盤**: vitest + @testing-library/react + jsdom
+2. **SignalStrengthDisplay（5件）**: 強度1-3のラベル表示、強度0の非表示、showLabel制御
+3. **BuyRecommendationCard（5件）**: 銘柄情報表示、シグナルラベル、購入提案の表示/非表示
+4. **BudgetSetting（3件）**: 予算表示、ダイアログ開閉、プリセット金額表示
+
+#### Rate Limit
+- **slowapi 0.1.9** 導入: 全エンドポイントに `60リクエスト/分/IP` のデフォルト制限
+- `main.py` に Limiter ミドルウェア + RateLimitExceeded ハンドラ追加
+
+### 変更ファイル
+- `backend/requirements.txt` — slowapi追加
+- `backend/requirements-test.txt` — テスト用依存関係（新規）
+- `backend/pytest.ini` — pytest設定（新規）
+- `backend/tests/conftest.py` — テスト共通フィクスチャ（新規）
+- `backend/tests/test_health.py` — 基盤動作確認テスト（新規）
+- `backend/tests/test_stock_service.py` — StockServiceテスト（新規）
+- `backend/tests/test_risk_service.py` — RiskServiceテスト（新規）
+- `backend/tests/test_auto_trade_service.py` — AutoTradeServiceテスト（新規）
+- `backend/tests/test_api.py` — API統合テスト（新規）
+- `backend/src/main.py` — Rate Limit追加
+- `frontend/package.json` — vitest/testing-library追加、testスクリプト追加
+- `frontend/vite.config.ts` — vitest設定追加
+- `frontend/src/test/setup.ts` — テストセットアップ（新規）
+- `frontend/src/components/__tests__/SignalStrengthDisplay.test.tsx` — 新規
+- `frontend/src/components/__tests__/BuyRecommendationCard.test.tsx` — 新規
+- `frontend/src/components/__tests__/BudgetSetting.test.tsx` — 新規
+
+---
+
+## Phase 30: バックエンド常時稼働化・再発防止（2026-05-01）
+
+### 背景
+- 4/28にdryRun=falseに切り替え、4/30から実資金自動売買を開始する予定だった
+- しかしバックエンドが4/28 13:43以降停止しており、実取引が一度も実行されなかった
+- 原因: nohupによる手動起動でプロセス終了後の自動復旧がなかった
+
+### 対応内容
+1. **systemdユーザーサービス化**: `~/.config/systemd/user/stock-backend.service` を作成
+   - `Restart=always` + `RestartSec=10` でクラッシュ時10秒後に自動再起動
+   - `StartLimitBurst=5` / `StartLimitIntervalSec=300` で連続クラッシュ時の無限再起動を防止
+2. **enable-linger**: `loginctl enable-linger taka5` でWSL再起動後もユーザーサービスが自動起動
+3. **サービス有効化**: `systemctl --user enable stock-backend.service` で永続有効化
+
+### 変更ファイル
+- `~/.config/systemd/user/stock-backend.service` — 新規
+
+### 管理コマンド
+```
+systemctl --user status stock-backend    # 状態確認
+systemctl --user restart stock-backend   # 再起動
+systemctl --user stop stock-backend      # 停止
+journalctl --user -u stock-backend -f    # ログ監視
+```
+
+---
+
+## Phase 31: kabu STATION API自動リトライ（2026-05-01）
+
+### 背景
+- kabu STATIONの再起動後にAPIトークンが失効し、手動でのトラブルシューティングが必要だった
+- 実資金モードで注文失敗時にリトライせず、取引機会を逃すリスクがあった
+
+### 対応内容
+1. **`_request_with_retry`メソッド追加**: 全APIリクエストで401応答時にトークン再取得→リトライ（最大3回）
+2. **`_ensure_token`メソッド追加**: トークン未取得時に自動で`connect()`を呼び出し
+3. **各APIメソッドのリファクタ**: `get_balance`/`get_positions`/`send_order`/`cancel_order`を`_request_with_retry`経由に統一
+
+### 変更ファイル
+- `backend/src/services/brokerage_service.py` — KabuStationClientに自動リトライ機構追加
+
+### 期待効果
+- kabu STATION再起動後も自動で再認証され、手動対応が不要に
+- 注文時の一時的な認証エラーでも取引機会を逃さない

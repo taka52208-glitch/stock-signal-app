@@ -5,8 +5,12 @@ from contextlib import asynccontextmanager
 from datetime import datetime, time, date
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from apscheduler.schedulers.background import BackgroundScheduler
 
 from sqlalchemy import text
@@ -207,7 +211,6 @@ async def lifespan(app: FastAPI):
     # Phase 20 マイグレーション: 旧デフォルト値を新デフォルト値にアップグレード
     phase20_upgrades = [
         # (テーブル, キー列, 値列, キー, 旧デフォルト, 新デフォルト)
-        ('settings', 'key', 'value', 'investmentBudget', '100000', '1000000'),
         ('settings', 'key', 'value', 'investmentBudget', '50000', '1000000'),
         ('auto_trade_config', 'key', 'value', 'maxTradesPerDay', '5', '15'),
         ('auto_trade_config', 'key', 'value', 'takeProfitPercent', '5.0', '8.0'),
@@ -359,16 +362,12 @@ async def lifespan(app: FastAPI):
 
     # Phase 26 マイグレーション: 取引実行率・利益率の改善
     phase26_upgrades = [
-        # minSignalStrength: 2→1（強度1の成功率31%を活用、強度3は0%で逆効果）
-        ('auto_trade_config', 'key', 'value', 'minSignalStrength', '2', '1'),
         # maxOpenPositions: 5→8（保有上限拒否46件を解消）
         ('risk_rules', 'key', 'value', 'maxOpenPositions', '5', '8'),
         # maxLossPerTrade: 15→20（ATR損切り距離に適合、拒否44件を解消）
         ('risk_rules', 'key', 'value', 'maxLossPerTrade', '15', '20'),
         # maxPortfolioLoss: 10→15（ポートフォリオ損失許容拡大）
         ('risk_rules', 'key', 'value', 'maxPortfolioLoss', '10', '15'),
-        # maxTradesPerDay: 3→15（DBに古い値が残っているケース対応）
-        ('auto_trade_config', 'key', 'value', 'maxTradesPerDay', '3', '15'),
     ]
     with engine.connect() as conn:
         for table, key_col, val_col, key, old_val, new_val in phase26_upgrades:
@@ -455,12 +454,17 @@ async def lifespan(app: FastAPI):
     logger.info("Scheduler stopped")
 
 
+# Rate Limiter: 1分60リクエスト/IP
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+
 app = FastAPI(
     title="Stock Signal API",
     description="日本株の売買シグナル判定API",
     version="1.0.0",
     lifespan=lifespan
 )
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # CORS設定
 origins = [o.strip() for o in settings.cors_origins.split(',') if o.strip()]

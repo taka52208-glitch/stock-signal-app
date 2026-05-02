@@ -1,6 +1,11 @@
+import asyncio
+import logging
+
 import httpx
 from sqlalchemy.orm import Session
 from src.models.stock import BrokerageConfig, BrokerageOrder, Stock, Transaction
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG = {
     'host': 'localhost',
@@ -29,33 +34,49 @@ class KabuStationClient:
             self.token = data.get('Token')
             return self.token
 
+    async def _ensure_token(self):
+        """トークンがなければ取得、認証エラー時はリトライ"""
+        if not self.token:
+            await self.connect()
+
+    async def _request_with_retry(self, method: str, path: str, **kwargs) -> httpx.Response:
+        """認証エラー時にトークン再取得してリトライ"""
+        await self._ensure_token()
+        for attempt in range(3):
+            async with httpx.AsyncClient() as client:
+                func = getattr(client, method)
+                resp = await func(f'{self.base_url}{path}', headers=self._headers(), **kwargs)
+            if resp.status_code == 401:
+                logger.info(f"[kabu-api] 401応答、トークン再取得 (attempt {attempt + 1}/3)")
+                self.token = None
+                try:
+                    await self.connect()
+                except Exception:
+                    if attempt < 2:
+                        await asyncio.sleep(2)
+                        continue
+                    raise
+                continue
+            resp.raise_for_status()
+            return resp
+        raise httpx.HTTPStatusError("3回リトライ後も認証失敗", request=resp.request, response=resp)
+
     def _headers(self) -> dict:
         return {'X-API-KEY': self.token or '', 'Host': 'localhost'}
 
     async def get_balance(self) -> dict:
         """残高照会"""
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f'{self.base_url}/wallet/cash',
-                headers=self._headers(),
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self._request_with_retry('get', '/wallet/cash')
+        return resp.json()
 
     async def get_positions(self) -> list[dict]:
         """保有銘柄照会"""
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                f'{self.base_url}/positions',
-                headers=self._headers(),
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self._request_with_retry('get', '/positions')
+        return resp.json()
 
     async def send_order(self, code: str, side: str, quantity: int,
                          order_type: str, price: float | None = None) -> dict:
         """注文送信"""
-        # kabu STATION APIの注文パラメータ
         side_map = {'buy': '2', 'sell': '1'}
         front_order_type_map = {
             'market': '10',   # 成行
@@ -78,28 +99,16 @@ class KabuStationClient:
             'ExpireDay': 0,  # 当日
         }
 
-        async with httpx.AsyncClient() as client:
-            resp = await client.post(
-                f'{self.base_url}/sendorder',
-                headers=self._headers(),
-                json=order_data,
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self._request_with_retry('post', '/sendorder', json=order_data)
+        return resp.json()
 
     async def cancel_order(self, order_id: str) -> dict:
         """注文取消"""
-        async with httpx.AsyncClient() as client:
-            resp = await client.put(
-                f'{self.base_url}/cancelorder',
-                headers=self._headers(),
-                json={
-                    'OrderId': order_id,
-                    'Password': self.api_password,
-                },
-            )
-            resp.raise_for_status()
-            return resp.json()
+        resp = await self._request_with_retry('put', '/cancelorder', json={
+            'OrderId': order_id,
+            'Password': self.api_password,
+        })
+        return resp.json()
 
 
 class BrokerageService:
