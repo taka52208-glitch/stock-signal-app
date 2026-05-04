@@ -437,6 +437,30 @@ class AutoTradeService:
         settings = stock_service.get_settings()
         remaining_trades = config['maxTradesPerDay'] - today_count
 
+        # 実資金モード: 事前にkabu STATION接続確認
+        if not config['dryRun']:
+            try:
+                conn_result = asyncio.run(brokerage_service.connect())
+                if not conn_result.get('connected'):
+                    logger.error(f"[auto-trade] kabu STATION接続失敗: {conn_result.get('message')}. 全銘柄スキップ")
+                    self._add_log(
+                        code='SYSTEM', signal_type='hold',
+                        result_status='failed',
+                        result_message=f'kabu STATION接続失敗: {conn_result.get("message")}',
+                        dry_run=False,
+                    )
+                    return
+                logger.info("[auto-trade] kabu STATION接続確認OK")
+            except Exception as e:
+                logger.error(f"[auto-trade] kabu STATION接続エラー: {e}. 全銘柄スキップ")
+                self._add_log(
+                    code='SYSTEM', signal_type='hold',
+                    result_status='failed',
+                    result_message=f'kabu STATION接続エラー: {str(e)}',
+                    dry_run=False,
+                )
+                return
+
         for auto_stock in enabled_stocks:
             if remaining_trades <= 0:
                 break
@@ -619,6 +643,8 @@ class AutoTradeService:
                                     price=current_price if config['orderType'] == 'limit' else None,
                                 )
                             )
+                            if order_result.get('status') == 'failed':
+                                raise RuntimeError(f"売注文がfailedステータスで返却 (id={order_result.get('id')})")
                             transaction = Transaction(
                                 code=code, transaction_type='sell',
                                 quantity=hold_qty, price=current_price,
@@ -852,6 +878,10 @@ class AutoTradeService:
                         price=order_price if config['orderType'] == 'limit' else None,
                     )
                 )
+
+                # 注文ステータス確認（failedならTransaction作成しない）
+                if order_result.get('status') == 'failed':
+                    raise RuntimeError(f"注文がfailedステータスで返却 (id={order_result.get('id')})")
 
                 # Transaction レコード作成
                 transaction = Transaction(

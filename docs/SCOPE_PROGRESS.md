@@ -1,24 +1,31 @@
 # スコープ進捗管理
 
-## 現在のステータス（2026-05-01 時点）
+## 現在のステータス（2026-05-05 時点）
 
 | 項目 | 状態 |
 |------|------|
-| 最終フェーズ | Phase 31（kabu STATION API自動リトライ） |
-| 最終コミット | 2026-04-23 |
+| 最終フェーズ | Phase 33（kabu STATION接続事前チェック） |
+| 最終コミット | 15c37ec（2026-05-02） |
 | フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
 | バックエンド | Render稼働中（stock-signal-api-u9al.onrender.com） |
 | ローカルバックエンド | **systemdサービス常時稼働（stock-backend.service）** |
 | DB | Neon PostgreSQL稼働中 |
 | 自動売買 | **実資金モード（dryRun=false）** |
-| 証券口座残高 | 100,187円（2026-04-29確認、実取引まだ0件） |
+| 証券口座残高 | 100,187円（2026-05-02 API確認） |
+| 保有ポジション | なし（架空データ削除済み） |
+| 実資金確定損益 | ¥0（約定実績なし） |
 | 全ページ | 11ページ完了 |
 | 全API | 44エンドポイント完了 |
 
-### 実資金運用の問題と対応（2026-05-01）
-- **問題**: 4/28にdryRun=falseに切り替えたが、バックエンドが4/28 13:43以降停止しており実取引が一度も実行されなかった
-- **原因**: nohupで手動起動していたため、プロセス終了後に自動復旧されなかった
-- **対応（Phase 30）**: systemdユーザーサービス化（Restart=always + enable-linger）で自動復旧を保証
+### 実資金運用状況（2026-05-05）
+- kabu STATION API接続確認済み（localhost:18080、5/5再起動後にトークン取得成功）
+- **5/1〜5/4の注文7件は全てkabu STATION接続失敗でfailed**（brokerage_ordersで確認）
+- auto_trade_logに誤ってsuccess記録されていた7件 → failedに修正済み（Phase 32）
+- Transactionテーブルの架空取引5件 → 削除済み（Phase 32）
+- **注文失敗がsuccess扱いされるバグを修正済み（Phase 32）**
+- **実資金モード実行前のkabu STATION接続事前チェック追加（Phase 33）**
+- 実際の約定: 0件、実資金損益: ¥0
+- 次回取引: 5/7（火）09:30〜（5/5-6はGW休場）
 
 ### ドライラン実績（Render上、3/13〜4/28、累計255取引）
 - 確定損益: +¥15,343 / 含み損益: +¥20,054 / **トータル: +¥35,397（+5.04%）**
@@ -53,13 +60,16 @@
 - [x] 証券口座への入金（100,000円、三菱UFJ即時入金、2026-04-29）
 - [x] 残高確認（100,187円、API経由で確認済み）
 - [x] バックエンドsystemdサービス化（2026-05-01、Phase 30）
-- 初回実稼働: **2026-05-02(金) 9:30**（4/29祝日、4/30-5/1バックエンド停止のため未実行）
+- [x] API認証リトライ機構追加（2026-05-02、Phase 31コミット済み）
 - Windowsファイアウォールルール追加済み（WSL→18080/18081ポート許可）
 - 起動時マイグレーションの上書きバグ修正済み（Phase 26 minSignalStrength/maxTradesPerDay, Phase 20 investmentBudget）
 
 ### 直近の主要改善履歴
+- Phase 33（5/5）: kabu STATION接続事前チェック（実資金モード時、銘柄処理前に接続確認）
+- Phase 32（5/5）: 注文失敗伝播バグ修正（brokerage failed時にsuccess記録されるバグ）+ 架空データクリーンアップ
 - Phase 31（5/1）: kabu STATION API自動リトライ（401時にトークン再取得×3回）
 - Phase 30（5/1）: バックエンド常時稼働化（systemd Restart=always + enable-linger）
+- Phase 29（5/2）: テスト実装（pytest 73件 + vitest 13件）+ Rate Limit（slowapi）
 - Phase 26-28（3/9〜3/13）: 取引実行率・R/R比改善、損切りバイパスの重大バグ修正
 - 現在のR/R比: 2:1（ATR利確4×ATR / ATR損切り2×ATR）
 - 段階利確: 3段階（1.5×/2.5×/4.0×ATR）
@@ -100,6 +110,8 @@
 - [x] Phase 29: テスト実装・Rate Limit
 - [x] Phase 30: バックエンド常時稼働化・再発防止
 - [x] Phase 31: kabu STATION API自動リトライ
+- [x] Phase 32: 注文失敗伝播バグ修正・架空データクリーンアップ
+- [x] Phase 33: kabu STATION接続事前チェック・認証失敗ログ強化
 
 ---
 
@@ -217,7 +229,7 @@
 - [x] アラートサービス（価格・シグナル・RSI条件監視）
 - [x] リスク管理サービス（ルール評価・チェックリスト・価格提案）
 - [x] バックテストサービス（戦略シミュレーション・スナップショット・比較）
-- [x] 証券会社連携サービス（kabu STATION API・注文・残高・ポジション）
+- [x] 証券会社連携サービス（kabu STATION API・注文・残高・ポジション・認証リトライ機構）
 - [x] 自動売買サービス（シグナル連動・ドライラン・ATR動的損切り/利確・3段階利確・トレーリングストップ・時間帯重み・昼休み実行禁止・全ケースログ記録・実現/含み損益計算・重複買い防止・ドライラン仮想ポートフォリオ対応リスク評価）
 - [x] 定期更新スケジューラ（09:30〜15:30の30分ごと + アラート・自動売買連動 + watchdog復帰対策）
 - [x] CORS設定（Vercelサブドメイン正規表現対応）
@@ -707,3 +719,53 @@ journalctl --user -u stock-backend -f    # ログ監視
 ### 期待効果
 - kabu STATION再起動後も自動で再認証され、手動対応が不要に
 - 注文時の一時的な認証エラーでも取引機会を逃さない
+
+---
+
+## Phase 32: 注文失敗伝播バグ修正・架空データクリーンアップ（2026-05-05）
+
+### 背景
+- 実資金収支を確認したところ、brokerage_ordersの全7件がstatus=failedにもかかわらず、auto_trade_logにはsuccess、Transactionテーブルにも架空取引が記録されていた
+- 原因: `BrokerageService.create_order`が注文失敗時に例外を握りつぶし（`except: print`）、呼び出し元に失敗が伝播しなかった
+- 5/1の2件（トヨタ166株・キーエンス6株）と5/4の5件は全て約定していない架空データ
+
+### 対応内容
+
+#### DBクリーンアップ
+1. **Transactionテーブル**: 架空の5件（7974/8053/9501/9766/7203）を削除
+2. **auto_trade_log**: 誤successの7件をfailedに修正（executed=false, メモ追記）
+
+#### コード修正
+3. **`brokerage_service.py`**: `create_order`のexceptブロックで`print`→`logger.error` + `raise`に変更。例外を呼び出し元に伝播
+4. **`auto_trade_service.py`（買い注文）**: `create_order`戻り値のstatusがfailedの場合`RuntimeError`を送出し、Transaction/ログの誤記録を防止
+5. **`auto_trade_service.py`（売り注文）**: 同様のstatusチェックを追加
+
+### 変更ファイル
+- `backend/src/services/brokerage_service.py` — 例外再送出
+- `backend/src/services/auto_trade_service.py` — 注文ステータスチェック追加（買い・売り両方）
+
+### 修正の防御層
+- **第1層**: `brokerage_service.create_order`が例外をraiseし、auto_trade_serviceのexceptブロックでfailedログ記録
+- **第2層**: 万が一例外が出ずにfailedステータスで返却された場合もRuntimeErrorで検知
+
+---
+
+## Phase 33: kabu STATION接続事前チェック・認証失敗ログ強化（2026-05-05）
+
+### 背景
+- Phase 32で注文失敗の伝播バグは修正したが、kabu STATIONが接続できない状態で全銘柄の処理が走り、個別にfailedログが大量に溜まる非効率が残っていた
+- 5/5にkabu STATION再起動で401が解消したが、認証失敗の原因がログから判別できなかった
+- kabu STATIONはセッションが内部的に壊れると再起動が必要になることが判明
+
+### 対応内容
+1. **初回認証失敗の詳細ログ**: `KabuStationClient.connect`で401時にエラーコード・メッセージ・対処法をlogger.errorで出力
+2. **実資金モード接続事前チェック**: `auto_trade_service`の銘柄処理ループ前に`brokerage_service.connect()`で接続確認。失敗時はSYSTEMログにfailed記録して即return（全銘柄スキップ）
+
+### 変更ファイル
+- `backend/src/services/brokerage_service.py` — 初回認証失敗時の詳細ログ + トークン取得成功ログ
+- `backend/src/services/auto_trade_service.py` — 実資金モード接続事前チェック追加
+
+### 期待効果
+- kabu STATION接続不可時に即座に検知し、無駄な個別注文失敗ログの大量発生を防止
+- ログに「kabu STATIONの再起動が必要な可能性があります」と具体的な対処法が記録される
+- ドライランモードには影響なし（事前チェックをスキップ）

@@ -29,9 +29,17 @@ class KabuStationClient:
                 f'{self.base_url}/token',
                 json={'APIPassword': self.api_password},
             )
+            if resp.status_code == 401:
+                body = resp.json() if resp.headers.get('content-type', '').startswith('application/json') else {}
+                logger.error(
+                    f"[kabu-api] 初回認証失敗(401): {body.get('Message', 'unknown')} "
+                    f"(Code={body.get('Code', 'N/A')}). "
+                    f"kabu STATIONの再起動が必要な可能性があります"
+                )
             resp.raise_for_status()
             data = resp.json()
             self.token = data.get('Token')
+            logger.info(f"[kabu-api] トークン取得成功")
             return self.token
 
     async def _ensure_token(self):
@@ -231,7 +239,8 @@ class BrokerageService:
         except Exception as e:
             order.status = 'failed'
             self.db.commit()
-            print(f"Order failed: {e}")
+            logger.error(f"[brokerage] Order failed for {code}: {e}")
+            raise
 
         return {
             'id': order.id,
