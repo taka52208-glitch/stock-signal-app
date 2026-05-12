@@ -49,22 +49,63 @@ logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
 
-# スケジュール時刻（平日のみ）— 取引時間中は30分ごと
+# スケジュール時刻（平日のみ）— 11:20までに手動kabu STATIONログインする運用前提で、
+# 11:30以降のみ実行。9:30/10:00/10:30/11:00 はスキップ（前場の前半は捨てる）。
 SCHEDULE_TIMES = [
-    time(9, 30), time(10, 0), time(10, 30), time(11, 0), time(11, 30),
+    time(11, 30),
     time(12, 30), time(13, 0), time(13, 30), time(14, 0), time(14, 30),
     time(15, 0), time(15, 30),
 ]
 
 
+def _jp_holidays(year: int) -> set[date]:
+    """日本の祝日（固定日 + 振替休日の簡易版）"""
+    holidays = {
+        date(year, 1, 1),    # 元日
+        date(year, 2, 11),   # 建国記念の日
+        date(year, 2, 23),   # 天皇誕生日
+        date(year, 3, 21),   # 春分の日（近似）
+        date(year, 4, 29),   # 昭和の日
+        date(year, 5, 3),    # 憲法記念日
+        date(year, 5, 4),    # みどりの日
+        date(year, 5, 5),    # こどもの日
+        date(year, 7, 21),   # 海の日（第3月曜、近似）
+        date(year, 8, 11),   # 山の日
+        date(year, 9, 15),   # 敬老の日（第3月曜、近似）
+        date(year, 9, 23),   # 秋分の日（近似）
+        date(year, 10, 13),  # スポーツの日（第2月曜、近似）
+        date(year, 11, 3),   # 文化の日
+        date(year, 11, 23),  # 勤労感謝の日
+    }
+    # 5/6: 5/3-5/5が日曜の場合の振替休日（GW対策）
+    if date(year, 5, 3).weekday() == 6:  # 日曜
+        holidays.add(date(year, 5, 6))
+    if date(year, 5, 4).weekday() == 6:
+        holidays.add(date(year, 5, 6))
+    if date(year, 5, 5).weekday() == 6:
+        holidays.add(date(year, 5, 6))
+    return holidays
+
+
 def _is_trading_day(d: date = None) -> bool:
-    """平日かどうか"""
-    return (d or date.today()).weekday() < 5
+    """平日かつ祝日でないか"""
+    d = d or date.today()
+    if d.weekday() >= 5:
+        return False
+    return d not in _jp_holidays(d.year)
+
+
+def _is_within_trading_hours() -> bool:
+    """現在が取引時間内か（9:00-15:30）"""
+    now = datetime.now().time()
+    return time(9, 0) <= now <= time(15, 30)
 
 
 def _should_have_run_today() -> bool:
-    """今日のスケジュール時刻を過ぎているか"""
+    """今日のスケジュール時刻を過ぎているか（取引時間内のみ）"""
     if not _is_trading_day():
+        return False
+    if not _is_within_trading_hours():
         return False
     now = datetime.now().time()
     return any(now >= t for t in SCHEDULE_TIMES)
@@ -490,8 +531,18 @@ app.include_router(auto_trade_router)
 
 @app.get('/api/health')
 def health_check():
-    """ヘルスチェック"""
-    return {'status': 'healthy'}
+    """ヘルスチェック（証券API接続状態を含む）"""
+    from src.services.brokerage_service import BrokerageService
+    db = SessionLocal()
+    try:
+        broker = BrokerageService(db)
+        broker_health = broker.get_health()
+        return {
+            'status': 'healthy',
+            'broker': broker_health,
+        }
+    finally:
+        db.close()
 
 
 @app.post('/api/update')
