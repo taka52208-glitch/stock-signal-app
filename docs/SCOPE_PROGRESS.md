@@ -1,31 +1,35 @@
 # スコープ進捗管理
 
-## 現在のステータス（2026-05-05 時点）
+## 現在のステータス（2026-05-12 時点）
 
 | 項目 | 状態 |
 |------|------|
-| 最終フェーズ | Phase 33（kabu STATION接続事前チェック） |
-| 最終コミット | 15c37ec（2026-05-02） |
+| 最終フェーズ | Phase 37（kabu STATION手動ログイン運用化） |
+| 最終コミット | 0370a40（2026-05-12） |
 | フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
 | バックエンド | Render稼働中（stock-signal-api-u9al.onrender.com） |
 | ローカルバックエンド | **systemdサービス常時稼働（stock-backend.service）** |
 | DB | Neon PostgreSQL稼働中 |
 | 自動売買 | **実資金モード（dryRun=false）** |
-| 証券口座残高 | 100,187円（2026-05-02 API確認） |
-| 保有ポジション | なし（架空データ削除済み） |
-| 実資金確定損益 | ¥0（約定実績なし） |
+| 証券口座残高 | 100,187円（2026-05-12 API確認） |
+| 保有ポジション | ランド(8918) 1株（含み損 -53円） |
+| 実資金確定損益 | ¥0（自動売買による約定実績なし） |
 | 全ページ | 11ページ完了 |
-| 全API | 44エンドポイント完了 |
+| 全API | 45エンドポイント完了（+1: brokerage/health） |
+| 運用ルール | **平日 11:20 までに kabu STATION 手動ログイン**（11:30初回スケジュール） |
 
-### 実資金運用状況（2026-05-05）
-- kabu STATION API接続確認済み（localhost:18080、5/5再起動後にトークン取得成功）
-- **5/1〜5/4の注文7件は全てkabu STATION接続失敗でfailed**（brokerage_ordersで確認）
-- auto_trade_logに誤ってsuccess記録されていた7件 → failedに修正済み（Phase 32）
-- Transactionテーブルの架空取引5件 → 削除済み（Phase 32）
-- **注文失敗がsuccess扱いされるバグを修正済み（Phase 32）**
-- **実資金モード実行前のkabu STATION接続事前チェック追加（Phase 33）**
-- 実際の約定: 0件、実資金損益: ¥0
-- 次回取引: 5/7（火）09:30〜（5/5-6はGW休場）
+### 実資金運用状況（2026-05-11）
+- kabu STATION API接続確認済み（localhost:18080、トークン取得成功、5/11再確認）
+- 証券口座残高: 100,187円（API経由で確認）
+- 保有: ランド(8918) 1株（テスト購入分、含み損-52円）
+- **5/1〜5/8の注文77件は全て失敗**（原因: 取引時間外発注 + パラメータバグ + 認証エラー）
+- **5/11 自動ログイン設定のスキーマバグ修正（Phase 36）**:
+  - BrokerageConfigUpdateRequest/ResponseにloginId/loginPassword未定義 → 追加
+  - これまでloginId/loginPasswordがDB保存されず、セッション切れ時の自動再ログイン（Phase 34）が毎回「ログインID/パスワード未設定」で失敗していた
+  - loginId/loginPassword をDB保存済み → 自動再ログインが機能する状態に
+- 実際の自動売買約定: 0件、実資金損益: ¥0
+- 次回取引: 5/12（月）09:30〜
+- 現在の買いシグナル(強度≥2): 9銘柄（NTT, ソニー, JT, 東急不HD, トヨタ, 任天堂, 味の素, 三井物産, コナミ）
 
 ### ドライラン実績（Render上、3/13〜4/28、累計255取引）
 - 確定損益: +¥15,343 / 含み損益: +¥20,054 / **トータル: +¥35,397（+5.04%）**
@@ -40,6 +44,7 @@
 | investmentBudget | 100,000円 |
 | minSignalStrength | 1 |
 | maxTradesPerDay | 15回/日 |
+| maxOpenPositions | 1 |
 | orderType | market（成行） |
 | takeProfitPercent | 10% |
 | stopLossPercent | -5% |
@@ -65,6 +70,9 @@
 - 起動時マイグレーションの上書きバグ修正済み（Phase 26 minSignalStrength/maxTradesPerDay, Phase 20 investmentBudget）
 
 ### 直近の主要改善履歴
+- Phase 37（5/12）: kabu STATION認証復旧運用化。原因: systemd配下のuvicornのPATHに`powershell.exe`なし→自動再起動が失敗していた + auto-login.ps1がENTER後の座標クリックで口座番号欄にloginPasswordを連結入力するUI自動化バグ。修正: (1) `POWERSHELL_EXE`絶対パス化、(2) `kabu_auto_login.ps1`をTAB遷移+各Type前Ctrl+A+Delに変更、(3) `/api/brokerage/connect` 既定 `force_restart=false`（ライブセッション破壊防止）、(4) スケジューラを11:30開始に変更（前場前半捨てる代わり、11:20までに手動ログインで運用）
+- Phase 35（5/8）: 注文パラメータ根本修正4件（Symbol/@1除去・FundType→AA・単元株丸め・取引時間ガード）+ 祝日カレンダー。検証API(18081)で買い/売り両方成功確認済み
+- Phase 34（5/7）: kabu STATION自動再起動（認証エラー/接続エラー時にWSL→PowerShell経由で自動再起動→リトライ）+ 接続ヘルス監視（DB永続化・APIエンドポイント・フロントエンド警告バナー）
 - Phase 33（5/5）: kabu STATION接続事前チェック（実資金モード時、銘柄処理前に接続確認）
 - Phase 32（5/5）: 注文失敗伝播バグ修正（brokerage failed時にsuccess記録されるバグ）+ 架空データクリーンアップ
 - Phase 31（5/1）: kabu STATION API自動リトライ（401時にトークン再取得×3回）
@@ -112,6 +120,10 @@
 - [x] Phase 31: kabu STATION API自動リトライ
 - [x] Phase 32: 注文失敗伝播バグ修正・架空データクリーンアップ
 - [x] Phase 33: kabu STATION接続事前チェック・認証失敗ログ強化
+- [x] Phase 34: kabu STATION自動再起動・接続ヘルス監視
+- [x] Phase 35: 注文パラメータ根本修正・取引時間ガード・祝日判定
+- [x] Phase 36: 自動ログイン設定スキーマ修正（loginId/loginPassword保存可能化）
+- [x] Phase 37: kabu STATION認証復旧運用化（PowerShellパス絶対化・auto-login.ps1 UIバグ修正・/connectをsafe-default化・スケジューラ11:30開始）
 
 ---
 
@@ -171,6 +183,7 @@
 | GET | `/api/backtests/{id}/trades` | バックテスト取引一覧 | [x] | [x] |
 | GET | `/api/backtests/{id}/snapshots` | バックテストスナップショット | [x] | [x] |
 | POST | `/api/backtests/compare` | バックテスト比較 | [x] | [x] |
+| GET | `/api/brokerage/health` | 証券API接続ヘルス | [x] | [x] |
 | GET | `/api/brokerage/config` | 証券会社設定取得 | [x] | [x] |
 | PUT | `/api/brokerage/config` | 証券会社設定更新 | [x] | [x] |
 | POST | `/api/brokerage/connect` | 証券会社接続テスト | [x] | [x] |
@@ -229,7 +242,7 @@
 - [x] アラートサービス（価格・シグナル・RSI条件監視）
 - [x] リスク管理サービス（ルール評価・チェックリスト・価格提案）
 - [x] バックテストサービス（戦略シミュレーション・スナップショット・比較）
-- [x] 証券会社連携サービス（kabu STATION API・注文・残高・ポジション・認証リトライ機構）
+- [x] 証券会社連携サービス（kabu STATION API・注文・残高・ポジション・認証リトライ機構・自動再起動・接続ヘルス監視）
 - [x] 自動売買サービス（シグナル連動・ドライラン・ATR動的損切り/利確・3段階利確・トレーリングストップ・時間帯重み・昼休み実行禁止・全ケースログ記録・実現/含み損益計算・重複買い防止・ドライラン仮想ポートフォリオ対応リスク評価）
 - [x] 定期更新スケジューラ（09:30〜15:30の30分ごと + アラート・自動売買連動 + watchdog復帰対策）
 - [x] CORS設定（Vercelサブドメイン正規表現対応）
@@ -769,3 +782,141 @@ journalctl --user -u stock-backend -f    # ログ監視
 - kabu STATION接続不可時に即座に検知し、無駄な個別注文失敗ログの大量発生を防止
 - ログに「kabu STATIONの再起動が必要な可能性があります」と具体的な対処法が記録される
 - ドライランモードには影響なし（事前チェックをスキップ）
+
+---
+
+## Phase 34: kabu STATION自動再起動・接続ヘルス監視（2026-05-07）
+
+### 背景
+- 5/6〜5/7にかけてkabu STATIONの認証エラー（4001007）が継続し、自動売買が完全停止
+- Phase 31のトークンリトライ機構はトークン期限切れの対策であり、kabu STATION自体のAPI認証固着には無力
+- 接続失敗がログに埋もれ、ユーザーが気づくまで数日間放置される問題
+- kabu STATIONはセッションが固着すると再起動以外に復旧方法がないことが確認済み
+
+### 対応内容
+
+#### kabu STATION自動再起動
+1. **`_restart_kabu_station`メソッド**: WSLからPowerShell経由でkabu STATIONを`Stop-Process → Start-Process`で自動再起動
+2. **プロセス起動確認**: 最大30秒間、5秒ごとに`Get-Process KabuS`でPID確認
+3. **`_connect_with_restart`メソッド**: 再起動後に最大3回リトライで再接続
+4. **`connect`メソッド改修**: 接続エラー（ConnectError）・認証エラー（401）・その他例外すべてで自動再起動→リトライを発動
+
+#### 接続ヘルス監視
+5. **`BrokerageHealth`モデル**: status/consecutive_failures/last_success_at/last_failure_at/last_error_messageをDB永続化
+6. **`_record_success`/`_record_failure`**: 接続結果をDB記録。3回連続失敗でCRITICALログ出力
+7. **`GET /api/brokerage/health`エンドポイント**: 接続ヘルス状態をJSON返却
+8. **`GET /api/health`拡張**: ヘルスチェックに証券API接続状態を含める
+
+#### 注文パラメータ修正（FundType欠落バグ）※Phase 35で再修正
+5a. **`send_order`に`FundType`パラメータ追加**: 現物買い='02'（保護預り）、現物売り='  '（半角スペース2つ）→ **Phase 35で'AA'に再修正**
+5b. **`DelivType`を売買方向で分岐**: 買い=2（お預り金）、売り=0（指定なし）
+5c. **注文エラー詳細ログ**: 400/500エラー時にレスポンスボディをログ出力
+
+#### フロントエンド警告バナー
+9. **StockList（銘柄一覧）ページ**: 接続エラー時に赤バナー「証券API接続エラー（N回連続失敗）- 自動売買が停止しています」
+10. **AutoTradeSettings（自動売買設定）ページ**: 詳細な接続エラーバナー（エラーメッセージ・最終成功/失敗時刻表示）
+11. **60秒ごと自動リフレッシュ**: brokerageHealthクエリを60秒間隔でポーリング
+
+### 動作確認結果
+| テストシナリオ | 結果 | 所要時間 |
+|---------------|------|---------|
+| kabu STATION停止 → 自動起動 → 接続 | 成功 | ~33秒 |
+| 認証エラー(401) → 自動再起動 → 接続 | 成功 | ~33秒 |
+| FundType付き注文 → パラメータ変換エラー解消 | 成功 | — |
+| 取引時間外の注文 → 「銘柄が見つからない」（正常） | 確認済み | — |
+
+### 変更ファイル
+- `backend/src/models/stock.py` — BrokerageHealthモデル追加
+- `backend/src/services/brokerage_service.py` — 自動再起動・ヘルス追跡・connect改修
+- `backend/src/routers/brokerage.py` — `/api/brokerage/health`エンドポイント追加
+- `backend/src/main.py` — `/api/health`に証券API状態を含める
+- `frontend/src/types/index.ts` — BrokerageHealth型追加
+- `frontend/src/api/client.ts` — getBrokerageHealth API追加
+- `frontend/src/pages/StockList.tsx` — 接続エラー警告バナー追加
+- `frontend/src/pages/AutoTradeSettings.tsx` — 接続エラー詳細バナー追加
+
+### 防御の層（Phase 31〜34）
+- **第1層（Phase 31）**: APIトークン期限切れ → トークン再取得リトライ（3回）
+- **第2層（Phase 33）**: 実資金モード実行前のkabu STATION接続事前チェック
+- **第3層（Phase 34）**: 接続/認証エラー → kabu STATION自動再起動 → リトライ（3回）
+- **第4層（Phase 34）**: ヘルス監視 → フロントエンド赤バナー表示 → ユーザーへの即時通知
+
+---
+
+## Phase 35: 注文パラメータ根本修正・取引時間ガード・祝日判定（2026-05-08）
+
+### 背景
+- 5/1〜5/7の実資金注文67件が全て400 Bad Requestで失敗
+- Phase 34でFundType追加したが、値が間違っていた（'02'ではなく'AA'が正しい）
+- Symbol形式もsendorderでは`@1`不要だった
+- 取引時間外（21:42 JST等）にキャッチアップ実行で発注していた
+- 数量が1株単位で送信され、単元株（100株）の倍数でなかった
+
+### 根本原因分析
+- 67件の注文失敗は**4つのバグの複合**。どれか1つでも残っていれば注文は通らない
+- Phase 34では4つ中1つ（FundType追加）しか修正できておらず、その値も誤りだった
+
+### 対応内容
+
+#### 注文パラメータ修正（バグ1,2）
+1. **Symbol形式修正**: `f'{code}@1'` → `code`（sendorderでは`@1`サフィックス不要）
+2. **FundType修正**: 買い`'02'`→`'AA'`（auカブコム口座は預り金自動振替）
+
+#### 数量計算修正（バグ3）
+3. **単元株丸め**: `int(budget / price)` → `(int(budget / price) // 100) * 100`（100株単位に切り捨て）
+
+#### 取引時間ガード（バグ4）
+4. **実資金モード取引時間チェック**: 9:00-15:30以外は発注スキップ（ログ記録付き）
+5. **昼休みガード**: 11:30-12:25は発注スキップ
+6. **キャッチアップ時間制限**: `_should_have_run_today()`に取引時間内チェック追加
+
+#### 祝日判定
+7. **`_jp_holidays()`**: 日本の祝日カレンダー（15祝日 + GW振替休日）
+8. **`_is_trading_day()`**: 平日チェックに祝日判定を追加
+
+#### ログ強化
+9. **sendorder詳細ログ**: 注文送信時にcode/side/qty/price、成功時にOrderId、失敗時にCode/Messageを出力
+
+### 検証結果（検証用API 18081で実施）
+| テスト | パラメータ | 結果 |
+|--------|-----------|------|
+| 買い注文 | Symbol='9501', FundType='AA', Qty=100 | **成功** |
+| 売り注文 | Symbol='8918', FundType='  ', Qty=100 | **成功** |
+| 祝日判定 | 5/4(月)みどりの日 | 休場判定 **正常** |
+| 取引時間外 | 21:42 JST | 時間外判定 **正常** |
+
+### 変更ファイル
+- `backend/src/services/brokerage_service.py` — Symbol・FundType修正、sendorderログ強化
+- `backend/src/services/auto_trade_service.py` — 取引時間ガード、昼休みガード、単元株丸め
+- `backend/src/main.py` — 祝日カレンダー、取引時間チェック、キャッチアップ制限
+
+### 修正した4つのバグと検証状況
+| # | バグ | 修正前 | 修正後 | 検証 |
+|---|------|--------|--------|------|
+| 1 | Symbol形式 | `'9501@1'`（銘柄不明エラー） | `'9501'` | 検証API成功 |
+| 2 | FundType | `'02'`（預り区分エラー） | `'AA'` | 検証API成功 |
+| 3 | 数量 | 1株単位（単位株数エラー） | 100株単位切り捨て | 検証API成功 |
+| 4 | 取引時間 | 時間外発注（市場エラー） | 9:00-15:30ガード | ロジックテスト済 |
+
+---
+
+## Phase 36: 自動ログイン設定スキーマ修正（2026-05-11）
+
+### 背景
+- Phase 34でkabu STATION自動再起動＋自動ログイン機能を実装したが、実際には一度も自動ログインが成功していなかった
+- 原因: `BrokerageConfigUpdateRequest`/`BrokerageConfigResponse`スキーマにloginId/loginPasswordフィールドが未定義
+- APIでloginId/loginPasswordをPUTしても、Pydanticバリデーションで無視されDB保存されなかった
+- そのため`_restart_kabu_station()`が毎回「ログインID/パスワード未設定」で即失敗していた
+
+### 対応内容
+1. **`BrokerageConfigResponse`にフィールド追加**: loginId(str), loginPassword(str)
+2. **`BrokerageConfigUpdateRequest`にフィールド追加**: loginId(Optional[str]), loginPassword(Optional[str])
+3. **DB保存確認**: PUT /api/brokerage/config でloginId/loginPasswordが正常に保存・取得されることを確認
+
+### 変更ファイル
+- `backend/src/models/schemas.py` — BrokerageConfigResponse/BrokerageConfigUpdateRequestにloginId/loginPassword追加
+
+### 影響
+- Phase 34の自動再起動→自動ログインフローが初めて機能する状態になった
+- セッション切れ時: 認証エラー検知 → kabu STATION再起動 → PowerShellスクリプトでログイン → API再接続
+- Node.js 18→22アップグレード（nvm導入）もこのセッションで実施
