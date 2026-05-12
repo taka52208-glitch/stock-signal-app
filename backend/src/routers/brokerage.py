@@ -12,6 +12,13 @@ from src.services.brokerage_service import BrokerageService
 router = APIRouter(prefix='/api/brokerage', tags=['brokerage'])
 
 
+@router.get('/health')
+def get_health(db: Session = Depends(get_db)):
+    """証券API接続ヘルス状態"""
+    service = BrokerageService(db)
+    return service.get_health()
+
+
 @router.get('/config', response_model=BrokerageConfigResponse)
 def get_config(db: Session = Depends(get_db)):
     """接続設定を取得"""
@@ -28,10 +35,10 @@ def update_config(request: BrokerageConfigUpdateRequest, db: Session = Depends(g
 
 
 @router.post('/connect', response_model=BrokerageConnectResponse)
-async def connect(db: Session = Depends(get_db)):
-    """接続テスト"""
+async def connect(force_restart: bool = False, db: Session = Depends(get_db)):
+    """接続テスト。force_restart=trueの時のみ失敗時にkabu STATIONを再起動する"""
     service = BrokerageService(db)
-    return await service.connect()
+    return await service.connect(force_restart=force_restart)
 
 
 @router.get('/balance', response_model=BrokerageBalanceResponse)

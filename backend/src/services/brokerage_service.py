@@ -1,16 +1,25 @@
 import asyncio
 import logging
+import subprocess
+import time
+from datetime import datetime
 
 import httpx
 from sqlalchemy.orm import Session
-from src.models.stock import BrokerageConfig, BrokerageOrder, Stock, Transaction
+from src.models.stock import BrokerageConfig, BrokerageHealth, BrokerageOrder, Stock, Transaction
 
 logger = logging.getLogger(__name__)
+
+KABU_STATION_EXE = r'C:\Users\taka5\AppData\Local\kabuStation\KabuS.exe'
+AUTO_LOGIN_SCRIPT = r'C:\Users\taka5\kabu_scripts\kabu_auto_login.ps1'
+POWERSHELL_EXE = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 
 DEFAULT_CONFIG = {
     'host': 'localhost',
     'port': '18080',
     'apiPassword': '',
+    'loginId': '',
+    'loginPassword': '',
 }
 
 
@@ -65,6 +74,8 @@ class KabuStationClient:
                         continue
                     raise
                 continue
+            if resp.status_code >= 400:
+                logger.error(f"[kabu-api] {method.upper()} {path} → {resp.status_code}: {resp.text}")
             resp.raise_for_status()
             return resp
         raise httpx.HTTPStatusError("3回リトライ後も認証失敗", request=resp.request, response=resp)
@@ -92,14 +103,16 @@ class KabuStationClient:
             'stop': '30',     # 逆指値
         }
 
+        side_code = side_map.get(side, '2')
         order_data = {
             'Password': self.api_password,
-            'Symbol': f'{code}@1',  # 東証
+            'Symbol': code,  # 銘柄コード（@1不要）
             'Exchange': 1,  # 東証
             'SecurityType': 1,  # 株式
-            'Side': side_map.get(side, '2'),
+            'Side': side_code,
             'CashMargin': 1,  # 現物
-            'DelivType': 2,  # お預り金
+            'DelivType': 2 if side_code == '2' else 0,  # 買い=お預り金, 売り=指定なし
+            'FundType': 'AA' if side_code == '2' else '  ',  # 買い=預り金自動振替, 売り=指定なし
             'AccountType': 2,  # 特定
             'Qty': quantity,
             'FrontOrderType': front_order_type_map.get(order_type, '10'),
@@ -107,8 +120,14 @@ class KabuStationClient:
             'ExpireDay': 0,  # 当日
         }
 
+        logger.info(f"[kabu-api] sendorder: {code} {side} {quantity}株 {order_type} price={price}")
         resp = await self._request_with_retry('post', '/sendorder', json=order_data)
-        return resp.json()
+        result = resp.json()
+        if 'OrderId' in result:
+            logger.info(f"[kabu-api] 注文成功: OrderId={result['OrderId']}")
+        else:
+            logger.error(f"[kabu-api] 注文失敗: Code={result.get('Code')} {result.get('Message')}")
+        return result
 
     async def cancel_order(self, order_id: str) -> dict:
         """注文取消"""
@@ -133,6 +152,8 @@ class BrokerageService:
             'host': result['host'],
             'port': int(result['port']),
             'apiPassword': result['apiPassword'],
+            'loginId': result.get('loginId', ''),
+            'loginPassword': result.get('loginPassword', ''),
         }
 
     def update_config(self, data: dict) -> dict:
@@ -153,18 +174,143 @@ class BrokerageService:
         config = self.get_config()
         return KabuStationClient(config['host'], config['port'], config['apiPassword'])
 
-    async def connect(self) -> dict:
-        """接続テスト"""
+    def _get_health(self) -> BrokerageHealth:
+        """ヘルス状態を取得（なければ作成）"""
+        health = self.db.query(BrokerageHealth).first()
+        if not health:
+            health = BrokerageHealth(status='unknown', consecutive_failures=0)
+            self.db.add(health)
+            self.db.commit()
+            self.db.refresh(health)
+        return health
+
+    def _record_success(self):
+        """接続成功を記録"""
+        health = self._get_health()
+        health.status = 'connected'
+        health.consecutive_failures = 0
+        health.last_success_at = datetime.now()
+        health.last_error_message = None
+        self.db.commit()
+        logger.info("[broker-health] 接続成功")
+
+    def _record_failure(self, error_message: str):
+        """接続失敗を記録"""
+        health = self._get_health()
+        health.consecutive_failures += 1
+        health.last_failure_at = datetime.now()
+        health.last_error_message = error_message
+
+        if 'ConnectError' in error_message or '接続できません' in error_message:
+            health.status = 'disconnected'
+        elif '認証' in error_message or '401' in error_message:
+            health.status = 'auth_error'
+        else:
+            health.status = 'error'
+
+        self.db.commit()
+        n = health.consecutive_failures
+        logger.error(f"[broker-health] 接続失敗 ({n}回連続): {error_message}")
+        if n >= 3:
+            logger.critical(
+                f"[broker-health] kabu STATION {n}回連続接続失敗！ "
+                f"自動売買が停止しています。状態: {health.status}"
+            )
+
+    def get_health(self) -> dict:
+        """ヘルス状態をAPIレスポンス用に返す"""
+        health = self._get_health()
+        return {
+            'status': health.status,
+            'consecutiveFailures': health.consecutive_failures,
+            'lastSuccessAt': health.last_success_at.isoformat() if health.last_success_at else None,
+            'lastFailureAt': health.last_failure_at.isoformat() if health.last_failure_at else None,
+            'lastErrorMessage': health.last_error_message,
+        }
+
+    def _restart_kabu_station(self) -> bool:
+        """WSLからWindows側のkabu STATIONを再起動+自動ログイン"""
+        try:
+            config = self.get_config()
+            login_id = config.get('loginId', '')
+            login_password = config.get('loginPassword', '')
+
+            if not login_id or not login_password:
+                logger.error("[broker-health] ログインID/パスワードが未設定")
+                return False
+
+            logger.info("[broker-health] kabu STATION再起動+自動ログインを試行...")
+
+            result = subprocess.run(
+                [POWERSHELL_EXE, '-ExecutionPolicy', 'Bypass', '-File',
+                 AUTO_LOGIN_SCRIPT, '-LoginId', login_id, '-LoginPassword', login_password],
+                timeout=120, capture_output=True, text=True,
+                env={**dict(subprocess.os.environ), 'API_PASSWORD': config.get('apiPassword', '')},
+            )
+            logger.info(f"[broker-health] 自動ログイン結果: exit={result.returncode}")
+            if result.stdout.strip():
+                logger.info(f"[broker-health] stdout: {result.stdout.strip()}")
+            if result.stderr.strip():
+                logger.error(f"[broker-health] stderr: {result.stderr.strip()}")
+
+            return result.returncode == 0
+        except subprocess.TimeoutExpired:
+            logger.error("[broker-health] 自動ログインがタイムアウト（120秒）")
+            return False
+        except Exception as e:
+            logger.error(f"[broker-health] kabu STATION再起動失敗: {e}")
+            return False
+
+    async def connect(self, force_restart: bool = False) -> dict:
+        """接続テスト。force_restart=Trueの時のみ失敗時にkabu STATIONを再起動する。
+
+        既定では再起動しない（手動診断でログイン中セッションを破壊しないため）。
+        """
         client = self._get_client()
         try:
             token = await client.connect()
-            return {'connected': True, 'message': f'接続成功（トークン取得済み）'}
+            self._record_success()
+            return {'connected': True, 'message': '接続成功（トークン取得済み）'}
         except httpx.ConnectError:
-            return {'connected': False, 'message': 'kabu STATIONに接続できません。アプリが起動しているか確認してください。'}
+            msg = 'kabu STATIONに接続できません'
+            self._record_failure(msg)
+            if force_restart:
+                return await self._connect_with_restart()
+            return {'connected': False, 'message': f'{msg}（force_restart=trueで再起動可）'}
         except httpx.HTTPStatusError as e:
-            return {'connected': False, 'message': f'認証エラー: {e.response.status_code}'}
+            msg = f'認証エラー: {e.response.status_code}'
+            self._record_failure(msg)
+            if e.response.status_code == 401 and force_restart:
+                return await self._connect_with_restart()
+            return {'connected': False, 'message': msg}
         except Exception as e:
-            return {'connected': False, 'message': f'接続エラー: {str(e)}'}
+            msg = f'接続エラー: {str(e)}'
+            self._record_failure(msg)
+            if force_restart:
+                return await self._connect_with_restart()
+            return {'connected': False, 'message': msg}
+
+    async def _connect_with_restart(self) -> dict:
+        """kabu STATIONを再起動して再接続"""
+        health = self._get_health()
+        if not self._restart_kabu_station():
+            return {'connected': False, 'message': 'kabu STATION再起動に失敗しました'}
+
+        # 再起動後、最大3回リトライ
+        client = self._get_client()
+        for attempt in range(3):
+            try:
+                await asyncio.sleep(10)
+                token = await client.connect()
+                self._record_success()
+                logger.info(f"[broker-health] 再起動後の接続成功 (attempt {attempt + 1})")
+                return {'connected': True, 'message': f'kabu STATION再起動後に接続成功'}
+            except Exception as e:
+                logger.warning(f"[broker-health] 再起動後リトライ {attempt + 1}/3 失敗: {e}")
+
+        msg = 'kabu STATION再起動後も接続失敗。手動でログインが必要な可能性があります'
+        self._record_failure(msg)
+        return {'connected': False, 'message': msg}
 
     async def get_balance(self) -> dict:
         """残高照会"""
@@ -239,7 +385,13 @@ class BrokerageService:
         except Exception as e:
             order.status = 'failed'
             self.db.commit()
-            logger.error(f"[brokerage] Order failed for {code}: {e}")
+            detail = ''
+            if hasattr(e, 'response') and e.response is not None:
+                try:
+                    detail = e.response.text
+                except Exception:
+                    pass
+            logger.error(f"[brokerage] Order failed for {code}: {e} | detail={detail}")
             raise
 
         return {
