@@ -920,3 +920,50 @@ journalctl --user -u stock-backend -f    # ログ監視
 - Phase 34の自動再起動→自動ログインフローが初めて機能する状態になった
 - セッション切れ時: 認証エラー検知 → kabu STATION再起動 → PowerShellスクリプトでログイン → API再接続
 - Node.js 18→22アップグレード（nvm導入）もこのセッションで実施
+
+---
+
+## Phase 37: Windowsスリープ起因の沈黙対策（2026-05-13）
+
+### 背景
+- 5/13 12:35〜22:10の約9時間半、バックエンドが完全停止
+- backend.log / server.log ともに**トレースバックなし**、uvicornのアクセスログまで途絶
+- → Pythonクラッシュではなく**ホストOS（Windows）の S3 スタンバイ**が原因と判定
+- `powercfg /a` 確認: スタンバイ(S3) / 休止状態 / 高速スタートアップ すべて有効
+- 12:30スロットは正常動作（7974 HOLD、買いシグナル10銘柄はRISK_BLOCKED）。13:00以降の5スロットを全ミス
+
+### 対応内容
+1. **`StockAutoTrade-KeepAwake` タスク登録**
+   - 平日 09:00 起動、`SetThreadExecutionState(ES_CONTINUOUS|ES_SYSTEM_REQUIRED)` で 16:00 までスリープブロック
+   - 画面OFFは許可（`ES_DISPLAY_REQUIRED` は立てない）
+   - `StartWhenAvailable` + `AllowStartIfOnBatteries` でノートPC対応
+2. **`WSL Auto Start` タスク登録**
+   - onlogon トリガで `wsl.exe -d Ubuntu -- systemctl --user start stock-backend.service` 起動
+   - PC再起動後のバックエンド自動復旧を担保
+3. **自己完結セットアップスクリプト**: `%TEMP%\stock-setup-all.ps1` 経由で UAC 昇格して両タスクを登録
+
+### ハマりポイント
+- `\\wsl.localhost\Ubuntu\...` UNC パスは **Windows の昇格セッションから不可視**（昇格は別ユーザーコンテキストで動作）
+- 当初 `setup-all.ps1` を UNC 経由で実行 → "The system cannot find the file specified" で全タスク未登録のまま終了
+- 回避策: `/mnt/c/Users/<user>/AppData/Local/Temp/` に自己完結スクリプトを書き、ローカルパスで昇格起動
+
+### 変更ファイル
+- `setup-keep-awake.bat`（新規・未コミット） — `register-keep-awake.ps1` 起動ラッパ
+- `setup-wsl-autostart.bat`（新規・未コミット） — `WSL Auto Start` 登録
+- `backend/scripts/setup-all.ps1`（新規・未コミット） — 統合セットアップ（UNC版・参考用）
+- `backend/scripts/keep-awake.ps1` / `register-keep-awake.ps1`（既存）
+
+### 検証結果（2026-05-13 22:30頃）
+| タスク | 登録 | 次回実行 |
+|--------|------|----------|
+| StockAutoTrade-KeepAwake | OK | 2026-05-14 09:00 |
+| WSL Auto Start | OK | onlogon |
+
+### 防御の層（更新版）
+- **第1〜4層（Phase 31〜34）**: API/接続レベルのリトライ・再起動・監視
+- **第5層（Phase 37）**: ホストOSレベルの可用性 — スリープ抑止 + ログオン時自動起動
+
+### 残課題
+- 明日（5/14）11:30スロットからの試運用でスリープ抑止が効くか実地確認
+- `_should_have_run_today()` キャッチアップが想定通り発火するか確認
+
