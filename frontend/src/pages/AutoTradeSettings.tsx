@@ -9,7 +9,7 @@ import {
 import { ArrowBack } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog } from '../types';
+import type { AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog, BrokerageHealth } from '../types';
 
 const DEFAULT_CONFIG: AutoTradeConfig = {
   enabled: true,
@@ -54,6 +54,12 @@ export default function AutoTradeSettings() {
   const { data: virtualPortfolio } = useQuery({
     queryKey: ['virtualPortfolio'],
     queryFn: api.getVirtualPortfolio,
+  });
+
+  const { data: brokerHealth } = useQuery({
+    queryKey: ['brokerageHealth'],
+    queryFn: api.getBrokerageHealth,
+    refetchInterval: 60_000,
   });
 
   useEffect(() => {
@@ -123,6 +129,25 @@ export default function AutoTradeSettings() {
         自動売買は実際のお金を使って取引を行います。
         必ずドライランモードで動作を確認してから有効化してください。
       </Alert>
+
+      {brokerHealth && brokerHealth.status !== 'connected' && brokerHealth.status !== 'unknown' && (
+        <Alert severity="error" sx={{ mb: 2 }} variant="filled">
+          <Typography variant="subtitle2" fontWeight="bold">
+            証券API接続エラー ({brokerHealth.consecutiveFailures}回連続失敗)
+          </Typography>
+          <Typography variant="body2">
+            {brokerHealth.lastErrorMessage || '接続できません'}
+          </Typography>
+          <Typography variant="caption" sx={{ mt: 0.5, display: 'block' }}>
+            最終成功: {brokerHealth.lastSuccessAt
+              ? new Date(brokerHealth.lastSuccessAt).toLocaleString('ja-JP')
+              : '記録なし'}
+            {brokerHealth.lastFailureAt && (
+              <> / 最終失敗: {new Date(brokerHealth.lastFailureAt).toLocaleString('ja-JP')}</>
+            )}
+          </Typography>
+        </Alert>
+      )}
 
       {/* グローバルON/OFF */}
       <Card sx={{ mb: 2 }}>

@@ -148,6 +148,18 @@ class BacktestSnapshot(Base):
     cash = Column(Float, nullable=False)
 
 
+class BrokerageHealth(Base):
+    __tablename__ = 'brokerage_health'
+
+    id = Column(Integer, primary_key=True, index=True)
+    status = Column(String(20), nullable=False, default='unknown')  # connected, disconnected, auth_error, unknown
+    consecutive_failures = Column(Integer, default=0)
+    last_success_at = Column(DateTime, nullable=True)
+    last_failure_at = Column(DateTime, nullable=True)
+    last_error_message = Column(String(500), nullable=True)
+    updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now())
+
+
 class BrokerageConfig(Base):
     __tablename__ = 'brokerage_config'
 

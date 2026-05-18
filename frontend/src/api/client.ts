@@ -5,7 +5,7 @@ import type {
   Alert, AlertCreateRequest, AlertHistory, RiskRules,
   TradeEvaluation, Checklist, PriceSuggestions,
   BacktestSummary, BacktestCreateRequest, BacktestDetail, BacktestTrade, BacktestSnapshot,
-  BrokerageConfig, BrokerageBalance, BrokeragePosition, OrderCreateRequest, Order,
+  BrokerageConfig, BrokerageHealth, BrokerageBalance, BrokeragePosition, OrderCreateRequest, Order,
   AutoTradeConfig, AutoTradeStockSetting, AutoTradeLog, VirtualPortfolio,
 } from '../types';
 
@@ -141,6 +141,9 @@ export const api = {
     fetchApi<{ backtests: BacktestDetail[] }>('/api/backtests/compare', {
       method: 'POST', body: JSON.stringify({ ids }),
     }),
+
+  // 証券API接続ヘルス（DB経由なのでトンネル不要）
+  getBrokerageHealth: () => fetchApi<BrokerageHealth>('/api/brokerage/health'),
 
   // 証券API（トンネル経由）
   getBrokerageConfig: () => fetchTunnelApi<BrokerageConfig>('/api/brokerage/config'),

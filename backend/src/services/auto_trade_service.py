@@ -1,11 +1,11 @@
 import asyncio
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, time
 from sqlalchemy.orm import Session
 from sqlalchemy import func as sql_func, text
 from src.models.stock import (
     AutoTradeConfig, AutoTradeStock, AutoTradeLog,
-    Stock, Signal, Transaction, StockPrice,
+    Stock, Signal, Transaction, StockPrice, BrokerageOrder,
 )
 from src.services.risk_service import RiskService
 from src.services.brokerage_service import BrokerageService
@@ -288,6 +288,15 @@ class AutoTradeService:
                 qty -= t.quantity
         return max(qty, 0)
 
+    def _has_today_buy_order(self, code: str) -> bool:
+        """本日この銘柄に対する買い注文が既に存在するか（status不問、failedも含む）"""
+        today_start = datetime.combine(date.today(), time(0, 0))
+        return self.db.query(BrokerageOrder).filter(
+            BrokerageOrder.code == code,
+            BrokerageOrder.side == 'buy',
+            BrokerageOrder.created_at >= today_start,
+        ).first() is not None
+
     def _get_entry_price(self, code: str) -> float | None:
         """保有銘柄の平均取得単価を計算"""
         transactions = self.db.query(Transaction).filter(
@@ -436,9 +445,33 @@ class AutoTradeService:
         brokerage_service = BrokerageService(self.db)
         settings = stock_service.get_settings()
         remaining_trades = config['maxTradesPerDay'] - today_count
+        # 実資金モードで使う実残高（kabu接続OK後に取得）
+        cash_balance: float | None = None
 
-        # 実資金モード: 事前にkabu STATION接続確認
+        # 実資金モード: 取引時間チェック + kabu STATION接続確認
         if not config['dryRun']:
+            now = datetime.now()
+            market_open = time(9, 0)
+            market_close = time(15, 30)
+            if not (market_open <= now.time() <= market_close):
+                logger.info(f"[auto-trade] 取引時間外 ({now.strftime('%H:%M')}). 実資金注文をスキップ")
+                self._add_log(
+                    code='SYSTEM', signal_type='hold',
+                    result_status='skipped',
+                    result_message=f'取引時間外 ({now.strftime("%H:%M")})',
+                    dry_run=False,
+                )
+                return
+            # 昼休み (11:30-12:25) は注文を控える
+            if time(11, 30) <= now.time() <= time(12, 25):
+                logger.info(f"[auto-trade] 昼休み中 ({now.strftime('%H:%M')}). 実資金注文をスキップ")
+                self._add_log(
+                    code='SYSTEM', signal_type='hold',
+                    result_status='skipped',
+                    result_message=f'昼休み中 ({now.strftime("%H:%M")})',
+                    dry_run=False,
+                )
+                return
             try:
                 conn_result = asyncio.run(brokerage_service.connect())
                 if not conn_result.get('connected'):
@@ -457,6 +490,20 @@ class AutoTradeService:
                     code='SYSTEM', signal_type='hold',
                     result_status='failed',
                     result_message=f'kabu STATION接続エラー: {str(e)}',
+                    dry_run=False,
+                )
+                return
+            # 実残高取得（数量計算と発注前検証に使用）
+            try:
+                balance_data = asyncio.run(brokerage_service.get_balance())
+                cash_balance = float(balance_data.get('cashBalance') or 0)
+                logger.info(f"[auto-trade] 実残高: {cash_balance:,.0f}円")
+            except Exception as e:
+                logger.error(f"[auto-trade] 残高取得エラー: {e}. 全銘柄スキップ")
+                self._add_log(
+                    code='SYSTEM', signal_type='hold',
+                    result_status='failed',
+                    result_message=f'残高取得エラー: {str(e)}',
                     dry_run=False,
                 )
                 return
@@ -768,10 +815,27 @@ class AutoTradeService:
                         dry_run=config['dryRun'],
                     )
                     continue
+                # 実資金モード: 当日その銘柄に既に発注済み（pending/submitted/filled/failed）ならスキップ
+                # → 同一スロットや次スロットで同じバグ注文を繰り返さないため
+                if not config['dryRun'] and self._has_today_buy_order(code):
+                    self._add_log(
+                        code=code, signal_type='buy', signal_strength=strength,
+                        active_signals=latest_signal.active_signals,
+                        order_price=current_price, quantity=0,
+                        result_status='skipped',
+                        result_message='本日この銘柄に発注済み（重複防止）',
+                        dry_run=False,
+                    )
+                    continue
                 risk_rules = risk_service.get_risk_rules()
                 max_positions = risk_rules['maxOpenPositions'] or 5
-                budget = settings['investmentBudget'] / max_positions
-                quantity = int(budget / current_price) if current_price > 0 else 0
+                # 実資金モードでは実残高で予算をクランプ
+                effective_budget = settings['investmentBudget']
+                if not config['dryRun'] and cash_balance is not None:
+                    effective_budget = min(effective_budget, cash_balance)
+                budget = effective_budget / max_positions
+                raw_qty = int(budget / current_price) if current_price > 0 else 0
+                quantity = (raw_qty // 100) * 100  # 単元株（100株）の倍数に切り捨て
                 if quantity <= 0:
                     self._add_log(
                         code=code,
@@ -785,6 +849,23 @@ class AutoTradeService:
                         dry_run=config['dryRun'],
                     )
                     continue
+                # 実資金モード: 注文額が実残高(5%バッファ)を超えるなら数量を下げる
+                if not config['dryRun'] and cash_balance is not None:
+                    affordable_qty = int((cash_balance * 0.95) / current_price) if current_price > 0 else 0
+                    affordable_qty = (affordable_qty // 100) * 100
+                    if affordable_qty < quantity:
+                        if affordable_qty <= 0:
+                            self._add_log(
+                                code=code, signal_type='buy', signal_strength=strength,
+                                active_signals=latest_signal.active_signals,
+                                order_price=current_price, quantity=0,
+                                result_status='skipped',
+                                result_message=f'残高不足（残高{cash_balance:,.0f}円, 単価{current_price:.0f}円）',
+                                dry_run=False,
+                            )
+                            continue
+                        logger.info(f"[auto-trade] {code}: 残高により数量を {quantity}→{affordable_qty} に縮小")
+                        quantity = affordable_qty
             else:  # sell
                 if config['dryRun']:
                     quantity = self._get_dry_run_holding_quantity(code)

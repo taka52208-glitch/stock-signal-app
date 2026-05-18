@@ -275,6 +275,14 @@ export interface BacktestSnapshot {
 }
 
 // 証券API
+export interface BrokerageHealth {
+  status: 'connected' | 'disconnected' | 'auth_error' | 'error' | 'unknown';
+  consecutiveFailures: number;
+  lastSuccessAt: string | null;
+  lastFailureAt: string | null;
+  lastErrorMessage: string | null;
+}
+
 export interface BrokerageConfig {
   host: string;
   port: number;

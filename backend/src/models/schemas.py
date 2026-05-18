@@ -301,12 +301,16 @@ class BrokerageConfigResponse(BaseModel):
     host: str
     port: int
     apiPassword: str
+    loginId: str = ''
+    loginPassword: str = ''
 
 
 class BrokerageConfigUpdateRequest(BaseModel):
     host: Optional[str] = None
     port: Optional[int] = None
     apiPassword: Optional[str] = None
+    loginId: Optional[str] = None
+    loginPassword: Optional[str] = None
 
 
 class BrokerageConnectResponse(BaseModel):

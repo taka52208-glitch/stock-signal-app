@@ -20,7 +20,7 @@ import {
 import { Add, Delete, Refresh, TrendingUp, TrendingDown, TrendingFlat } from '@mui/icons-material';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../api/client';
-import type { Stock, SignalType } from '../types';
+import type { Stock, SignalType, BrokerageHealth } from '../types';
 import SignalStrengthDisplay from '../components/SignalStrengthDisplay';
 
 const getSignalColor = (signal: SignalType) => {
@@ -65,6 +65,12 @@ export default function StockList() {
   const { data: stocks, isLoading, error } = useQuery({
     queryKey: ['stocks'],
     queryFn: api.getStocks,
+  });
+
+  const { data: brokerHealth } = useQuery<BrokerageHealth>({
+    queryKey: ['brokerageHealth'],
+    queryFn: api.getBrokerageHealth,
+    refetchInterval: 60_000,
   });
 
   const addMutation = useMutation({
@@ -129,6 +135,12 @@ export default function StockList() {
           <Refresh />
         </IconButton>
       </Box>
+
+      {brokerHealth && brokerHealth.status !== 'connected' && brokerHealth.status !== 'unknown' && (
+        <Alert severity="error" variant="filled" sx={{ mb: 2 }}>
+          証券API接続エラー ({brokerHealth.consecutiveFailures}回連続失敗) - 自動売買が停止しています
+        </Alert>
+      )}
 
       {stocks?.length === 0 ? (
         <Alert severity="info">監視銘柄がありません。右下の＋ボタンから追加してください。</Alert>
