@@ -1,17 +1,18 @@
 # スコープ進捗管理
 
-## 現在のステータス（2026-05-15 時点）
+## 現在のステータス（2026-05-20 時点）
 
 | 項目 | 状態 |
 |------|------|
-| 最終フェーズ | Phase 39（実残高ベース数量調整＋当日重複発注防止） |
-| 最終コミット | c599aa2（2026-05-14、Phase 39 はワークツリー未コミット） |
+| 最終フェーズ | Phase 42（WSL自動起動タスク化／ワークツリー未コミット） |
+| 最終コミット | 56574b1（2026-05-15、Phase 39-40） |
+| 進行中の調査 | **Code=100378 発注拒否の根本原因究明（5/15〜継続中、5/20も検証材料取れず）** |
 | フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
 | バックエンド | Render稼働中（stock-signal-api-u9al.onrender.com） |
 | ローカルバックエンド | **systemdサービス常時稼働（stock-backend.service）** |
 | DB | Neon PostgreSQL稼働中 |
 | 自動売買 | **実資金モード（dryRun=false）** |
-| 証券口座残高 | 100,187円（2026-05-12 API確認） |
+| 証券口座残高 | 100,187円（2026-05-19 API確認） |
 | 保有ポジション | ランド(8918) 1株（含み損 -53円） |
 | 実資金確定損益 | ¥0（自動売買による約定実績なし） |
 | 全ページ | 11ページ完了 |
@@ -69,7 +70,33 @@
 - Windowsファイアウォールルール追加済み（WSL→18080/18081ポート許可）
 - 起動時マイグレーションの上書きバグ修正済み（Phase 26 minSignalStrength/maxTradesPerDay, Phase 20 investmentBudget）
 
+### 進行中の調査（5/19 時点）— Code=100378 発注拒否の根本原因
+- **症状**: 5/15以降、auto-tradeの発注が全件 `Code=100378「指定された市場でのお取引はお受けできません」`で失敗。5/19も2件（4755, 9501）失敗、実現損益¥0
+- **潰した仮説**: kabu STATION API設定 / ペイロード形式 / 銘柄固有問題 / 口座契約 / API契約未申込（すべて否定済）
+- **今晩特定した有力原因**: **Exchange パラメータの市場ミスマッチ**
+  - GUI 確認画面の「市場」欄が **「東証+」**（時間外PTS等の代替市場）と表示
+  - kabu STATION は時間外、自動で東証+へルーティング
+  - 一方コードは `Exchange: 1`（東証）固定 → 時間外は弾かれる
+- **未解決の謎**: ザラ場時間中（5/19 14:12 / 14:32 / 15:02 JST）の発注も全て100378 → 「時間外」だけでは説明つかない
+- **明朝の検証準備**: `scripts/diag-market-test.sh` を crontab で `2026-05-20 09:31 JST` 1ショット実行（8918/100株/指値5円・非約定）。ログ: `backend/logs/diag_market_test.log`
+- **担当**: (1) kabu API Exchangeコード（PTS/東証+）の仕様調査、(2) ザラ場中失敗の仮説立て直し
+
+#### 5/20 実況（検証材料は得られず）
+- 09:31予定の `diag-market-test.sh` は **WSL VMが昨夜23:56〜本日14:42までダウン** していたため未実行（`backend/logs/diag_market_test.log` 0バイトのまま）
+- 14:42 WSL復活 → 14:43 backend自動起動 → 14:44キャッチアップは kabu未ログインで401（全銘柄スキップ）
+- 14:50頃 ユーザー手動ログイン → `/api/brokerage/connect` 成功
+- 14:51 手動 `/api/auto-trade/run` 実行（50シグナル評価、約定0）
+  - 強度2 buy: **9501 東電**（@544.3, qty=100）→ `risk_blocked`「損切りラインまで10.6%（上限10%）」※ ATR×2ベース、上限ギリギリ超過で拒否
+  - 強度2 buy: 8830, 3659 → `予算不足で購入数量が0`
+  - 強度2 sell: 8316, 9432, 8306 → `保有数量が0のため売却不可`
+  - 結局 Code=100378 を踏む発注が1件も走らず、Exchange仮説の検証材料は明朝に持ち越し
+- Phase 41 として登録していた発注拒否の真因特定は 5/21 朝（diag-market-test再実行）に再リトライ
+
 ### 直近の主要改善履歴
+- Phase 42（5/20）: **WSL自動起動タスク化**。`KabuSignalAutoStart`（Windowsタスクスケジューラ、トリガ: ログオン時 + 平日09:00、Action: `wsl.exe -d Ubuntu -- /bin/true`）を登録。Phase 37で作成済みだった `setup-windows-autostart.ps1` は未実行だったため `KabuSignalAutoStart` タスクは存在せず、5/20朝の WSL ダウン → 14:42 まで未復帰 → 11:30〜14:30 の全スケジュール枠スキップという事象を踏んで対処。残るギャップ: ザラ場中（09:00〜15:30）にWSL落ちした場合は次の09:00まで救えない（運用上は手動 `wsl.exe -d Ubuntu -- /bin/true` で対応）
+- Phase 40（5/15）: 接続ヘルス監視＋テスト基盤
+- Phase 39（5/15）: 実残高ベース数量縮小（投資予算 vs 実残高の差異対応）
+- Phase 38（5/13）: OSレベルスリープ抑止（kabu APIセッション断の実地観測ベース）+ Windowsスリープ起因の沈黙対策
 - Phase 37（5/12）: kabu STATION認証復旧運用化。原因: systemd配下のuvicornのPATHに`powershell.exe`なし→自動再起動が失敗していた + auto-login.ps1がENTER後の座標クリックで口座番号欄にloginPasswordを連結入力するUI自動化バグ。修正: (1) `POWERSHELL_EXE`絶対パス化、(2) `kabu_auto_login.ps1`をTAB遷移+各Type前Ctrl+A+Delに変更、(3) `/api/brokerage/connect` 既定 `force_restart=false`（ライブセッション破壊防止）、(4) スケジューラを11:30開始に変更（前場前半捨てる代わり、11:20までに手動ログインで運用）
 - Phase 35（5/8）: 注文パラメータ根本修正4件（Symbol/@1除去・FundType→AA・単元株丸め・取引時間ガード）+ 祝日カレンダー。検証API(18081)で買い/売り両方成功確認済み
 - Phase 34（5/7）: kabu STATION自動再起動（認証エラー/接続エラー時にWSL→PowerShell経由で自動再起動→リトライ）+ 接続ヘルス監視（DB永続化・APIエンドポイント・フロントエンド警告バナー）
@@ -124,6 +151,11 @@
 - [x] Phase 35: 注文パラメータ根本修正・取引時間ガード・祝日判定
 - [x] Phase 36: 自動ログイン設定スキーマ修正（loginId/loginPassword保存可能化）
 - [x] Phase 37: kabu STATION認証復旧運用化（PowerShellパス絶対化・auto-login.ps1 UIバグ修正・/connectをsafe-default化・スケジューラ11:30開始）
+- [x] Phase 38: OSレベルスリープ抑止・Windowsスリープ起因の沈黙対策
+- [x] Phase 39: 実残高ベース数量縮小（投資予算 vs 実残高の差異対応）
+- [x] Phase 40: 接続ヘルス監視＋テスト基盤
+- [ ] Phase 41（調査中）: Code=100378 発注拒否の根本対処（Exchange値の動的切替 / 時間外PTS発注対応 / ザラ場中失敗の真因特定）— 5/20は検証材料取れず（WSLダウン+リスク拒否で発注不発）
+- [x] Phase 42: WSL自動起動タスク化（KabuSignalAutoStart: onLogon + 平日09:00）
 
 ---
 
