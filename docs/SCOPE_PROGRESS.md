@@ -4,9 +4,9 @@
 
 | 項目 | 状態 |
 |------|------|
-| 最終フェーズ | Phase 43（vmIdleTimeout=-1／ワークツリー未コミット） |
-| 最終コミット | 56574b1（2026-05-15、Phase 39-40） |
-| 進行中の調査 | **Code=100378 発注拒否の根本原因究明（5/15〜継続中、5/20も検証材料取れず）** |
+| 最終フェーズ | Phase 43（vmIdleTimeout=-1、コミット&push済） |
+| 最終コミット | 3e7b3ed（2026-05-21、Phase 43 docs） |
+| 進行中の調査 | **Code=100378 発注拒否の根本原因究明（5/15〜継続中、5/21も検証材料取れず）** |
 | フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
 | バックエンド | Render稼働中（stock-signal-api-u9al.onrender.com） |
 | ローカルバックエンド | **systemdサービス常時稼働（stock-backend.service）** |
@@ -91,6 +91,13 @@
   - 強度2 sell: 8316, 9432, 8306 → `保有数量が0のため売却不可`
   - 結局 Code=100378 を踏む発注が1件も走らず、Exchange仮説の検証材料は明朝に持ち越し
 - Phase 41 として登録していた発注拒否の真因特定は 5/21 朝（diag-market-test再実行）に再リトライ
+
+#### 5/21 実況（またしても検証材料は得られず）
+- 5/20 11:03 SIGTERMでWSLダウン → 5/21 21:38 手動復旧まで停止 → ザラ場 09:30-15:30 全枠スキップ（2日連続）
+- 21:38 WSL/systemd復旧、21:42 kabu STATION API接続確認OK
+- 22時台 `.wslconfig` に `vmIdleTimeout=-1` 追記＋WSL再起動 → Phase 43 として 3e7b3ed でコミット&push
+- diag-market-test 未実行（取引時間外、明日 09:31 再リトライ）
+- 検証材料は **明日 5/22（金）09:31 発火に持ち越し**（3日連続）
 
 ### 直近の主要改善履歴
 - Phase 43（5/21）: **WSL2 VM 永続化（vmIdleTimeout=-1）**。Phase 42 タスクは正しく 11:02:54 に発火していたが、`.wslconfig` の `vmIdleTimeout` 未指定（既定60秒）により wake action `/bin/true` 終了直後の60秒後に VM がアイドル落ち → 11:03 SIGTERM で systemd / uvicorn 道連れ → 21:38 手動復旧まで停止 → ザラ場 09:30-15:30 全枠スキップ → 実損益 ¥0。`/mnt/c/Users/taka5/.wslconfig` に `vmIdleTimeout=-1` 追記。一度起こせばPC再起動まで VM 維持される。保険として `KabuSignalAutoStart` に平日 09:00〜16:00 の 30分毎リピート（XML: `C:\Users\taka5\KabuSignalAutoStart.xml`）を用意したが、上書き登録には管理者権限が必要のため未適用。
