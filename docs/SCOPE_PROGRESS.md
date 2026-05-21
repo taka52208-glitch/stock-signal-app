@@ -1,10 +1,10 @@
 # スコープ進捗管理
 
-## 現在のステータス（2026-05-20 時点）
+## 現在のステータス（2026-05-21 時点）
 
 | 項目 | 状態 |
 |------|------|
-| 最終フェーズ | Phase 42（WSL自動起動タスク化／ワークツリー未コミット） |
+| 最終フェーズ | Phase 43（vmIdleTimeout=-1／ワークツリー未コミット） |
 | 最終コミット | 56574b1（2026-05-15、Phase 39-40） |
 | 進行中の調査 | **Code=100378 発注拒否の根本原因究明（5/15〜継続中、5/20も検証材料取れず）** |
 | フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
@@ -93,7 +93,8 @@
 - Phase 41 として登録していた発注拒否の真因特定は 5/21 朝（diag-market-test再実行）に再リトライ
 
 ### 直近の主要改善履歴
-- Phase 42（5/20）: **WSL自動起動タスク化**。`KabuSignalAutoStart`（Windowsタスクスケジューラ、トリガ: ログオン時 + 平日09:00、Action: `wsl.exe -d Ubuntu -- /bin/true`）を登録。Phase 37で作成済みだった `setup-windows-autostart.ps1` は未実行だったため `KabuSignalAutoStart` タスクは存在せず、5/20朝の WSL ダウン → 14:42 まで未復帰 → 11:30〜14:30 の全スケジュール枠スキップという事象を踏んで対処。残るギャップ: ザラ場中（09:00〜15:30）にWSL落ちした場合は次の09:00まで救えない（運用上は手動 `wsl.exe -d Ubuntu -- /bin/true` で対応）
+- Phase 43（5/21）: **WSL2 VM 永続化（vmIdleTimeout=-1）**。Phase 42 タスクは正しく 11:02:54 に発火していたが、`.wslconfig` の `vmIdleTimeout` 未指定（既定60秒）により wake action `/bin/true` 終了直後の60秒後に VM がアイドル落ち → 11:03 SIGTERM で systemd / uvicorn 道連れ → 21:38 手動復旧まで停止 → ザラ場 09:30-15:30 全枠スキップ → 実損益 ¥0。`/mnt/c/Users/taka5/.wslconfig` に `vmIdleTimeout=-1` 追記。一度起こせばPC再起動まで VM 維持される。保険として `KabuSignalAutoStart` に平日 09:00〜16:00 の 30分毎リピート（XML: `C:\Users\taka5\KabuSignalAutoStart.xml`）を用意したが、上書き登録には管理者権限が必要のため未適用。
+- Phase 42（5/20）: **WSL自動起動タスク化**。`KabuSignalAutoStart`（Windowsタスクスケジューラ、トリガ: ログオン時 + 平日09:00、Action: `wsl.exe -d Ubuntu -- /bin/true`）を登録。Phase 37で作成済みだった `setup-windows-autostart.ps1` は未実行だったため `KabuSignalAutoStart` タスクは存在せず、5/20朝の WSL ダウン → 14:42 まで未復帰 → 11:30〜14:30 の全スケジュール枠スキップという事象を踏んで対処。残るギャップ: ザラ場中（09:00〜15:30）にWSL落ちした場合は次の09:00まで救えない（運用上は手動 `wsl.exe -d Ubuntu -- /bin/true` で対応） → Phase 43 で vmIdleTimeout=-1 にて根本対処
 - Phase 40（5/15）: 接続ヘルス監視＋テスト基盤
 - Phase 39（5/15）: 実残高ベース数量縮小（投資予算 vs 実残高の差異対応）
 - Phase 38（5/13）: OSレベルスリープ抑止（kabu APIセッション断の実地観測ベース）+ Windowsスリープ起因の沈黙対策
