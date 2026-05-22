@@ -1,12 +1,12 @@
 # スコープ進捗管理
 
-## 現在のステータス（2026-05-21 時点）
+## 現在のステータス（2026-05-22 時点）
 
 | 項目 | 状態 |
 |------|------|
-| 最終フェーズ | Phase 43（vmIdleTimeout=-1、コミット&push済） |
-| 最終コミット | 3e7b3ed（2026-05-21、Phase 43 docs） |
-| 進行中の調査 | **Code=100378 発注拒否の根本原因究明（5/15〜継続中、5/21も検証材料取れず）** |
+| 最終フェーズ | Phase 44（user-systemd 重複停止／ワークツリー未コミット） |
+| 最終コミット | 4ca1a42（2026-05-21、5/21 実況追記） |
+| 進行中の調査 | **Code=100378 発注拒否の根本原因究明（5/15〜継続中、5/22も検証材料取れず＝3日連続）** |
 | フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
 | バックエンド | Render稼働中（stock-signal-api-u9al.onrender.com） |
 | ローカルバックエンド | **systemdサービス常時稼働（stock-backend.service）** |
@@ -99,7 +99,25 @@
 - diag-market-test 未実行（取引時間外、明日 09:31 再リトライ）
 - 検証材料は **明日 5/22（金）09:31 発火に持ち越し**（3日連続）
 
+#### 5/22 実況（vmIdleTimeout=-1 は機能、しかし user-systemd 重複起動でザラ場全枠スキップ＝3日連続）
+- **Phase 43 自体は完全に機能**: 09:00:04 boot 〜 21:51:35 まで **12時間51分連続 WSL VM 稼働**（`journalctl --list-boots` で確認）。`vmIdleTimeout=-1` 想定通り
+- ところが **stock-backend.service が 09:00:21 に道連れ死** してザラ場 09:30〜15:30 全枠スキップ。真因：
+  - **`/etc/systemd/system/multi-user.target.wants/stock-backend.service` symlink mtime が 2026-05-22 21:08** → 5/22 朝の boot 時点で **system 配下の `stock-backend.service` は systemctl enable されていなかった**
+  - 一方 **`/home/taka5/.config/systemd/user/stock-backend.service`** が 5/1 22:10 以降残存し、systemd preset 上 enabled（`list-unit-files` で `disabled enabled` = current=disabled, preset=enabled）→ user manager 起動時に自動起動
+  - 9:00:05 user systemd[306] が user版 `stock-backend.service`（Description="Stock Auto-Trade Backend"、system版は "(system)"付きで区別可能）を Started
+  - 9:00:16〜21 で migration 実行中、9:00:21 に session-2.scope (User taka5) 終了 → user@1000.service 全体 Stopping → user 配下の stock-backend.service も道連れ死亡
+  - 21:08:23 ユーザー手動で `systemctl enable stock-backend.service` + start（system 版）→ 21:36 SIGKILL → restart loop → 21:51 boot 終了
+- WSL Restart Drill を 21:51:49 開始（`C:\Users\taka5\wsl-drill.ps1`）: `wsl --shutdown` → `/bin/true` で wake → 60s 待機 → probe 6回×10s。**結果 FAILED 判定**。ただし真の失敗ではなく drill のリトライ窓 (130s) が uvicorn cold start に足りなかった誤判定（drill 終了 21:54:33 → 21:57 時点で同じ backend が `/api/brokerage/health` に応答）
+- 対処（5/22 22時台、本セッションで適用、未コミット）:
+  1. `/home/taka5/.config/systemd/user/stock-backend.service` を `.disabled-20260522` にリネーム + `systemctl --user daemon-reload` → user systemd は今後 stock-backend.service を持たない
+  2. `C:\Users\taka5\wsl-drill.ps1` のリトライ窓を **120s 待機 + 30回×10s（最大5分窓）** に拡張
+- 残課題（持ち越し）:
+  - **diag-market-test 4日連続未実行**。次回チャンスは 5/25（月）09:31。ただし上記対処の効果検証も同タイミング
+  - 5/22 21:08 で誰が `systemctl enable` を実行したか不明（ユーザー手動の可能性）。Phase 30 以降「system 配下に置き直したが enable し忘れた」状態が長期間放置されていた疑い
+  - 過去にもメモリ `wsl_systemd_user_vs_system.md` に同パターン記録あり → user systemd は WSL session 終了で巻き添え死、というルールが共有メモリにあるのに user 配下のファイルが残存していた
+
 ### 直近の主要改善履歴
+- Phase 44（5/22）: **user-systemd 重複の停止**。5/1 Phase 30 で `stock-backend.service` を user 配下に作ったまま、Phase 38 前後で system 配下に置き直しても user 配下のファイルが残存。systemd preset で user 版が enabled 扱いになっており、5/22 朝の boot で user manager が起動 → user session 終了で道連れ死亡 → ザラ場全枠スキップ（3日連続）。対処: `/home/taka5/.config/systemd/user/stock-backend.service` を `.disabled-20260522` リネーム + daemon-reload。あわせて `wsl-drill.ps1` のリトライ窓を最大5分（120s+30×10s）に拡張。Phase 43 の vmIdleTimeout=-1 自体は **12時間51分連続稼働で完全に機能していた** ことを確認。
 - Phase 43（5/21）: **WSL2 VM 永続化（vmIdleTimeout=-1）**。Phase 42 タスクは正しく 11:02:54 に発火していたが、`.wslconfig` の `vmIdleTimeout` 未指定（既定60秒）により wake action `/bin/true` 終了直後の60秒後に VM がアイドル落ち → 11:03 SIGTERM で systemd / uvicorn 道連れ → 21:38 手動復旧まで停止 → ザラ場 09:30-15:30 全枠スキップ → 実損益 ¥0。`/mnt/c/Users/taka5/.wslconfig` に `vmIdleTimeout=-1` 追記。一度起こせばPC再起動まで VM 維持される。保険として `KabuSignalAutoStart` に平日 09:00〜16:00 の 30分毎リピート（XML: `C:\Users\taka5\KabuSignalAutoStart.xml`）を用意したが、上書き登録には管理者権限が必要のため未適用。
 - Phase 42（5/20）: **WSL自動起動タスク化**。`KabuSignalAutoStart`（Windowsタスクスケジューラ、トリガ: ログオン時 + 平日09:00、Action: `wsl.exe -d Ubuntu -- /bin/true`）を登録。Phase 37で作成済みだった `setup-windows-autostart.ps1` は未実行だったため `KabuSignalAutoStart` タスクは存在せず、5/20朝の WSL ダウン → 14:42 まで未復帰 → 11:30〜14:30 の全スケジュール枠スキップという事象を踏んで対処。残るギャップ: ザラ場中（09:00〜15:30）にWSL落ちした場合は次の09:00まで救えない（運用上は手動 `wsl.exe -d Ubuntu -- /bin/true` で対応） → Phase 43 で vmIdleTimeout=-1 にて根本対処
 - Phase 40（5/15）: 接続ヘルス監視＋テスト基盤
