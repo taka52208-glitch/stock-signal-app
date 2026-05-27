@@ -1,12 +1,13 @@
 # スコープ進捗管理
 
-## 現在のステータス（2026-05-26 時点）
+## 現在のステータス（2026-05-27 時点）
 
 | 項目 | 状態 |
 |------|------|
-| 最終フェーズ | **Phase 45（auto-trade ユニバース低単価拡張／ワークツリー未コミット）** |
-| 最終コミット | 34d459b（2026-05-22、Phase 44） |
+| 最終フェーズ | **Phase 47（信用取引コード基盤の opt-in 実装）** |
+| 最終コミット | e809c44（2026-05-27、Phase 47） |
 | 進行中の調査 | **Code=100378 発注拒否の根本原因究明（5/15〜継続中、強度2 buy が予算内銘柄で発火するのを待機中）** |
+| 月10万円ロードマップ | **着手中** — Phase 46（閾値→1）/ Phase 47（信用基盤）完了、Phase 48〜53 残 |
 | フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
 | バックエンド | Render稼働中（stock-signal-api-u9al.onrender.com） |
 | ローカルバックエンド | **systemdサービス常時稼働（stock-backend.service）** |
@@ -44,12 +45,13 @@
 | dryRun | false（実資金） |
 | enabled | true |
 | investmentBudget | 100,000円 |
-| minSignalStrength | 1 |
+| minSignalStrength | 1（Phase 46 で 2→1） |
 | maxTradesPerDay | 15回/日 |
 | maxOpenPositions | 1 |
 | orderType | market（成行） |
 | takeProfitPercent | 10% |
 | stopLossPercent | -5% |
+| tradingMode | cash（Phase 47 で追加。margin_system / margin_general へ切替可） |
 
 ### 実資金移行ステータス — 全完了
 - [x] 入金反映済み（1,000円、買付可能額1,000円）
@@ -132,6 +134,8 @@
 - 仮想ポートフォリオ（参考、別系統）: 8銘柄保有・評価損益 +¥38,599（+5.49%）
 
 ### 直近の主要改善履歴
+- Phase 47（5/27）: **信用取引コード基盤の opt-in 実装**。月10万円ロードマップの初手。`brokerage_service.send_order/create_order` に `trading_mode` 引数追加（cash/margin_system/margin_general）。`auto_trade_service` の DEFAULT_CONFIG・get_config・update_config・残高取得・create_order 呼び出しで tradingMode 連携。`AutoTradeConfigResponse/UpdateRequest` に `tradingMode` 追加（デフォルト cash）。**デフォルトは現物のまま、有効化は `PUT /api/auto-trade/config '{"tradingMode":"margin_system"}'` で明示切替**。信用時は `marginBalance` を effective_budget に流す。残課題: Position Sizing/Risk Service の信用対応、フロントエンド設定 UI、信用残高表示。
+- Phase 46（5/27）: **minSignalStrength 2→1＋phase25 マイグレーション巻き戻し撤回**。5/27 ザラ場検証で kabu STATION 接続は終日 OK にもかかわらず約定 0 件。strength=2 buy 3 銘柄（4063・9433・9766）が残高 ¥85,187 では 1 株も買えず、Phase 45 で追加した低単価ユニバースは全て strength=1 で閾値外という構造を確認。`backend/src/main.py:386-389` の Phase 25 マイグレーションが毎回 1→2 に上書きしていたため当該行を削除。SCOPE_PROGRESS.md 現行設定表 (L47) と実起動値の食い違いを解消。
 - Phase 45（5/26）: **auto-trade ユニバース低単価拡張**。残高¥85,187 で1単元購入可能（株価≤¥851）な銘柄を yfinance で価格確認の上9件追加（8410 セブン銀行 / 7211 三菱自 / 6753 シャープ / 3861 王子HD / 2127 日本M&A / 5563 新日本電工 / 9831 ヤマダHD / 2353 日本駐車場開発 / 2317 システナ）。`POST /api/stocks` で銘柄登録→`PUT /api/auto-trade/stocks/{code}` で enabled=true。ユニバース 50→59 銘柄、全 enabled。強度2 buy が予算内銘柄で発火するかは月曜以降の観察待ち。
 - Phase 44（5/22）: **user-systemd 重複の停止**。5/1 Phase 30 で `stock-backend.service` を user 配下に作ったまま、Phase 38 前後で system 配下に置き直しても user 配下のファイルが残存。systemd preset で user 版が enabled 扱いになっており、5/22 朝の boot で user manager が起動 → user session 終了で道連れ死亡 → ザラ場全枠スキップ（3日連続）。対処: `/home/taka5/.config/systemd/user/stock-backend.service` を `.disabled-20260522` リネーム + daemon-reload。あわせて `wsl-drill.ps1` のリトライ窓を最大5分（120s+30×10s）に拡張。Phase 43 の vmIdleTimeout=-1 自体は **12時間51分連続稼働で完全に機能していた** ことを確認。
 - Phase 43（5/21）: **WSL2 VM 永続化（vmIdleTimeout=-1）**。Phase 42 タスクは正しく 11:02:54 に発火していたが、`.wslconfig` の `vmIdleTimeout` 未指定（既定60秒）により wake action `/bin/true` 終了直後の60秒後に VM がアイドル落ち → 11:03 SIGTERM で systemd / uvicorn 道連れ → 21:38 手動復旧まで停止 → ザラ場 09:30-15:30 全枠スキップ → 実損益 ¥0。`/mnt/c/Users/taka5/.wslconfig` に `vmIdleTimeout=-1` 追記。一度起こせばPC再起動まで VM 維持される。保険として `KabuSignalAutoStart` に平日 09:00〜16:00 の 30分毎リピート（XML: `C:\Users\taka5\KabuSignalAutoStart.xml`）を用意したが、上書き登録には管理者権限が必要のため未適用。
