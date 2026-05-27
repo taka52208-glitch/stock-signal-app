@@ -21,6 +21,7 @@ DEFAULT_CONFIG = {
     'dryRun': 'true',
     'takeProfitPercent': '10.0',
     'stopLossPercent': '-5.0',
+    'tradingMode': 'cash',  # cash / margin_system / margin_general
 }
 
 # 時間帯重み: 昼休み前後は実行禁止、信頼性の高い時間帯にボーナス
@@ -60,6 +61,9 @@ class AutoTradeService:
                 result[c.key] = c.value
         except Exception as e:
             logger.error(f"[auto-trade] DB設定読み込み失敗（デフォルト使用）: {e}")
+        trading_mode = result.get('tradingMode', 'cash')
+        if trading_mode not in ('cash', 'margin_system', 'margin_general'):
+            trading_mode = 'cash'
         return {
             'enabled': result['enabled'] == 'true',
             'minSignalStrength': int(result['minSignalStrength']),
@@ -68,6 +72,7 @@ class AutoTradeService:
             'dryRun': result['dryRun'] == 'true',
             'takeProfitPercent': float(result['takeProfitPercent']),
             'stopLossPercent': float(result['stopLossPercent']),
+            'tradingMode': trading_mode,
         }
 
     def update_config(self, data: dict) -> dict:
@@ -80,6 +85,7 @@ class AutoTradeService:
             'dryRun': lambda v: str(v).lower(),
             'takeProfitPercent': str,
             'stopLossPercent': str,
+            'tradingMode': str,
         }
         for key, value in data.items():
             if key not in key_map:
@@ -494,10 +500,17 @@ class AutoTradeService:
                 )
                 return
             # 実残高取得（数量計算と発注前検証に使用）
+            # tradingMode=margin_* のときは信用余力(MarginAccountWallet) を effective_budget に使う。
+            # kabu の get_balance() は cashBalance と marginBalance を返す（brokerage_service:320-322）。
             try:
                 balance_data = asyncio.run(brokerage_service.get_balance())
                 cash_balance = float(balance_data.get('cashBalance') or 0)
-                logger.info(f"[auto-trade] 実残高: {cash_balance:,.0f}円")
+                margin_balance = float(balance_data.get('marginBalance') or 0)
+                if config.get('tradingMode') in ('margin_system', 'margin_general') and margin_balance > 0:
+                    cash_balance = margin_balance
+                    logger.info(f"[auto-trade] 信用余力: {cash_balance:,.0f}円 (mode={config['tradingMode']})")
+                else:
+                    logger.info(f"[auto-trade] 実残高: {cash_balance:,.0f}円")
             except Exception as e:
                 logger.error(f"[auto-trade] 残高取得エラー: {e}. 全銘柄スキップ")
                 self._add_log(
@@ -688,6 +701,7 @@ class AutoTradeService:
                                     code=code, order_type=config['orderType'],
                                     side='sell', quantity=hold_qty,
                                     price=current_price if config['orderType'] == 'limit' else None,
+                                    trading_mode=config.get('tradingMode', 'cash'),
                                 )
                             )
                             if order_result.get('status') == 'failed':
@@ -957,6 +971,7 @@ class AutoTradeService:
                         side=latest_signal.signal_type,
                         quantity=quantity,
                         price=order_price if config['orderType'] == 'limit' else None,
+                        trading_mode=config.get('tradingMode', 'cash'),
                     )
                 )
 

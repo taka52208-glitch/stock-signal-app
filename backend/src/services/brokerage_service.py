@@ -94,33 +94,49 @@ class KabuStationClient:
         return resp.json()
 
     async def send_order(self, code: str, side: str, quantity: int,
-                         order_type: str, price: float | None = None) -> dict:
-        """注文送信"""
+                         order_type: str, price: float | None = None,
+                         trading_mode: str = 'cash') -> dict:
+        """注文送信。trading_mode: cash=現物, margin_system=制度信用, margin_general=一般信用"""
         side_map = {'buy': '2', 'sell': '1'}
         front_order_type_map = {
             'market': '10',   # 成行
             'limit': '20',    # 指値
             'stop': '30',     # 逆指値
         }
+        # kabu STATION API: CashMargin 1=現物, 2=新規(信用), 3=返済(信用)
+        # 信用取引は新規買付/売建で 2、返済売り/返済買戻しで 3 を指定する仕様
+        cash_margin_map = {
+            'cash': 1,
+            'margin_system': 2,
+            'margin_general': 2,
+        }
+        # 信用区分: kabu STATION では MarginTradeType で指定（1=制度信用6ヶ月, 3=一般信用無期限）
+        margin_trade_type_map = {
+            'margin_system': 1,
+            'margin_general': 3,
+        }
 
         side_code = side_map.get(side, '2')
+        cash_margin = cash_margin_map.get(trading_mode, 1)
         order_data = {
             'Password': self.api_password,
             'Symbol': code,  # 銘柄コード（@1不要）
             'Exchange': 1,  # 東証
             'SecurityType': 1,  # 株式
             'Side': side_code,
-            'CashMargin': 1,  # 現物
-            'DelivType': 2 if side_code == '2' else 0,  # 買い=お預り金, 売り=指定なし
-            'FundType': 'AA' if side_code == '2' else '  ',  # 買い=預り金自動振替, 売り=指定なし
+            'CashMargin': cash_margin,
+            'DelivType': 2 if (side_code == '2' and trading_mode == 'cash') else 0,
+            'FundType': 'AA' if (side_code == '2' and trading_mode == 'cash') else '  ',
             'AccountType': 2,  # 特定
             'Qty': quantity,
             'FrontOrderType': front_order_type_map.get(order_type, '10'),
             'Price': price or 0,
             'ExpireDay': 0,  # 当日
         }
+        if trading_mode in margin_trade_type_map:
+            order_data['MarginTradeType'] = margin_trade_type_map[trading_mode]
 
-        logger.info(f"[kabu-api] sendorder: {code} {side} {quantity}株 {order_type} price={price}")
+        logger.info(f"[kabu-api] sendorder: {code} {side} {quantity}株 {order_type} price={price} mode={trading_mode}")
         resp = await self._request_with_retry('post', '/sendorder', json=order_data)
         result = resp.json()
         if 'OrderId' in result:
@@ -359,8 +375,9 @@ class BrokerageService:
         } for o in orders]
 
     async def create_order(self, code: str, order_type: str, side: str,
-                           quantity: int, price: float | None = None) -> dict:
-        """注文を送信"""
+                           quantity: int, price: float | None = None,
+                           trading_mode: str = 'cash') -> dict:
+        """注文を送信。trading_mode: cash=現物 / margin_system=制度信用 / margin_general=一般信用"""
         # DB記録を先に作成
         order = BrokerageOrder(
             code=code,
@@ -377,7 +394,7 @@ class BrokerageService:
         try:
             client = self._get_client()
             await client.connect()
-            result = await client.send_order(code, side, quantity, order_type, price)
+            result = await client.send_order(code, side, quantity, order_type, price, trading_mode)
 
             order.brokerage_order_id = result.get('OrderId')
             order.status = 'submitted'

@@ -1336,3 +1336,56 @@ Phase 45 評価 #3 では「黒字データ未取得のため minSignalStrength=
 - 11:30 が「昼休み中」と判定された境界判定ロジックの確認
 - 約定が発生した場合の Phase 41（Code=100378 発注拒否）検証材料の確保
 - 起動時マイグレーションのバグ全体棚卸し（Phase 26 で「修正済み」となっているが Phase 25 の本体ロジックは残っていた）
+
+## Phase 47: 信用取引対応の opt-in 実装（2026-05-27 — 月10万円ロードマップ初手）
+
+### 背景
+ユーザーから「月10万円稼げる仕組みを作れ」との要求。現状は元手 ¥85,187・`maxOpenPositions=1`・TP+10%/SL-5% のため、勝率100%・月5回約定でも月¥42,500 が物理上限。**月¥10万を達成するには「実効資本の拡大」が不可欠**であり、kabu STATION API は信用取引（制度・一般）に対応しているため、これを呼び出せるように基盤を整える。
+
+### 月10万円ロードマップにおける位置づけ
+| 柱 | 内容 | 実装 | リスク変化 |
+|---|---|---|---|
+| ① 信用取引対応 | 実効資本 3.3 倍化 | **Phase 47で実装** | 損失も 3.3 倍 |
+| ② TP/SL 短期化 | TP 10→3%、SL -5→-2%、回転3倍 | Phase 48 想定 | 回転中に微損積み上げの可能性 |
+| ③ 資本投入 | ユーザーが追加入金 | ユーザー判断 | – |
+| ④ maxOpenPositions 段階拡大 | 1→3→5 と資本に応じて | Phase 49+ | 分散によりドローダウン緩和 |
+
+### Phase 47 で適用した実装（opt-in 設計）
+1. `brokerage_service.py:send_order` に `trading_mode: str = 'cash'` 引数を追加
+   - `cash_margin_map`: `cash=1 / margin_system=2 / margin_general=2`（kabu の CashMargin 仕様）
+   - `margin_trade_type_map`: `margin_system=1（制度信用6ヶ月） / margin_general=3（一般信用無期限）` → 信用時のみ `MarginTradeType` を付与
+   - 現物時のみ `DelivType=2 / FundType='AA'`、信用時は `DelivType=0 / FundType='  '`
+   - `sendorder` ログに `mode=...` を追加
+2. `brokerage_service.py:create_order` に `trading_mode` を pass-through
+3. `auto_trade_service.py`
+   - `DEFAULT_CONFIG['tradingMode']='cash'` を追加（**デフォルトは現物のまま**）
+   - `get_config()` で `tradingMode` を返す（validation: cash/margin_system/margin_general 以外は cash にフォールバック）
+   - `update_config()` の `key_map` に `tradingMode` を追加
+   - 残高取得時に `tradingMode in ('margin_system','margin_general') and margin_balance > 0` の場合、`cash_balance = margin_balance` に置換して effective_budget 計算に流す
+   - `create_order` 呼び出し2箇所（買い・売り）に `trading_mode=config.get('tradingMode','cash')` を渡す
+4. `schemas.py`
+   - `AutoTradeConfigResponse.tradingMode: Literal['cash','margin_system','margin_general']='cash'`
+   - `AutoTradeConfigUpdateRequest.tradingMode: Optional[...]=None`
+
+### 有効化手順（明示操作が必要）
+```bash
+# 1. 現物→制度信用に切り替える例（DB値を直接 PUT）
+curl -X PUT http://localhost:8734/api/auto-trade/config \
+  -H 'Content-Type: application/json' \
+  -d '{"tradingMode":"margin_system"}'
+
+# 2. 切り替え後、次サイクル以降の発注に信用区分が反映される
+```
+**重要**: 切り替えた瞬間からドローダウンも3.3倍になる。最初は dryRun=true で動作確認すること推奨。
+
+### 変更ファイル
+- `backend/src/services/brokerage_service.py` — `send_order`/`create_order` の trading_mode 対応（+30行程度）
+- `backend/src/services/auto_trade_service.py` — DEFAULT_CONFIG / get_config / update_config / 残高取得 / create_order 呼び出し2箇所
+- `backend/src/models/schemas.py` — Response/Request スキーマに tradingMode 追加
+- DB 変更なし（DEFAULT_CONFIG 経由で cash が初期値、起動時マイグレーションも追加なし）
+
+### 残課題
+- フロントエンド設定画面に tradingMode セレクタ追加（未実装）
+- 信用余力残高表示の UI 対応（marginBalance の表示）
+- 信用取引時の Position Sizing と Risk Service の見直し（現コードは現金残高ベースの上限で動いており、信用余力で発注すると `maxPositionPercent` などの絶対額判定がずれる）
+- 月10万円目標の Phase 48（TP/SL 短期化）と Phase 49（maxOpenPositions 段階拡大）の設計

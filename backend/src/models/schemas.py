@@ -363,6 +363,7 @@ class AutoTradeConfigResponse(BaseModel):
     dryRun: bool
     takeProfitPercent: float
     stopLossPercent: float
+    tradingMode: Literal['cash', 'margin_system', 'margin_general'] = 'cash'
 
 
 class AutoTradeConfigUpdateRequest(BaseModel):
@@ -373,6 +374,7 @@ class AutoTradeConfigUpdateRequest(BaseModel):
     dryRun: Optional[bool] = None
     takeProfitPercent: Optional[float] = Field(None, ge=1.0, le=30.0)
     stopLossPercent: Optional[float] = Field(None, ge=-30.0, le=-1.0)
+    tradingMode: Optional[Literal['cash', 'margin_system', 'margin_general']] = None
 
 
 class AutoTradeToggleRequest(BaseModel):
