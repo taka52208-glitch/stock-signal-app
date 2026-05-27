@@ -383,8 +383,8 @@ async def lifespan(app: FastAPI):
         conn.commit()
 
     # Phase 25 マイグレーション: 利益率改善（エントリー精度向上 + ポジション集中）
+    # Why: minSignalStrength 1→2 行は撤回。Phase 45 まで進んだ現状では強度2 buy が単元金額的に残高で買えず約定ゼロ要因となるため、SCOPE_PROGRESS.md 現行設定表どおり 1 を維持する。
     phase25_upgrades = [
-        ('auto_trade_config', 'key', 'value', 'minSignalStrength', '1', '2'),
         ('risk_rules', 'key', 'value', 'maxOpenPositions', '10', '5'),
     ]
     with engine.connect() as conn:
