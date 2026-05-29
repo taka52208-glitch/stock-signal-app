@@ -14,6 +14,12 @@ KABU_STATION_EXE = r'C:\Users\taka5\AppData\Local\kabuStation\KabuS.exe'
 AUTO_LOGIN_SCRIPT = r'C:\Users\taka5\kabu_scripts\kabu_auto_login.ps1'
 POWERSHELL_EXE = '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe'
 
+# 最良執行方針対応（2026-03-02〜）で、現物・信用「新規」発注の市場コード 1(東証) は廃止された。
+# 9(SOR) または 27(東証＋) を指定しないと kabu が Code=100378「現物買・売注文抑止エラー」で拒否する。
+# 9(SOR)=複数市場で最良執行・手数料無料（推奨）。27(東証＋)=東証優先の特殊用途。
+# 注意: 信用建玉の「返済」は従来どおり 1(東証) 必須だが、本コードは返済(CashMargin=3)未対応。
+NEW_ORDER_EXCHANGE = 9  # SOR
+
 DEFAULT_CONFIG = {
     'host': 'localhost',
     'port': '18080',
@@ -121,7 +127,7 @@ class KabuStationClient:
         order_data = {
             'Password': self.api_password,
             'Symbol': code,  # 銘柄コード（@1不要）
-            'Exchange': 1,  # 東証
+            'Exchange': NEW_ORDER_EXCHANGE,  # 9=SOR（旧 1=東証 は2026-03廃止→Code=100378）
             'SecurityType': 1,  # 株式
             'Side': side_code,
             'CashMargin': cash_margin,

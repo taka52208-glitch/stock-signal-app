@@ -1,12 +1,12 @@
 # スコープ進捗管理
 
-## 現在のステータス（2026-05-27 時点）
+## 現在のステータス（2026-05-29 時点）
 
 | 項目 | 状態 |
 |------|------|
-| 最終フェーズ | **Phase 47（信用取引コード基盤の opt-in 実装）** |
+| 最終フェーズ | **Phase 48（Code=100378 真因特定＆修正: Exchange 1→9 SOR）** |
 | 最終コミット | e809c44（2026-05-27、Phase 47） |
-| 進行中の調査 | **Code=100378 発注拒否の根本原因究明（5/15〜継続中、強度2 buy が予算内銘柄で発火するのを待機中）** |
+| 進行中の調査 | **【解決済 5/29・Phase 48】Code=100378 = 市場コード 1(東証) 廃止（2026-03-02 最良執行方針対応）。Exchange を 9(SOR) に修正済。寄り後に実地検証（diag cron 09:05）** |
 | 月10万円ロードマップ | **着手中** — Phase 46（閾値→1）/ Phase 47（信用基盤）完了、Phase 48〜53 残 |
 | フロントエンド | Vercel稼働中（kabu-signal-navi.vercel.app） |
 | バックエンド | Render稼働中（stock-signal-api-u9al.onrender.com） |
@@ -84,6 +84,8 @@
 - **明朝の検証準備**: `scripts/diag-market-test.sh` を crontab で `2026-05-20 09:31 JST` 1ショット実行（8918/100株/指値5円・非約定）。ログ: `backend/logs/diag_market_test.log`
 - **担当**: (1) kabu API Exchangeコード（PTS/東証+）の仕様調査、(2) ザラ場中失敗の仮説立て直し
 
+> **【5/29 解決・Phase 48】** 真因は時間帯ではなく **市場コード 1(東証) の廃止**（2026-03-02 最良執行方針対応, kabusapi Issue #1072）。現物・信用の新規発注は `9(SOR)` または `27(東証＋)` 必須。kabu公式エラー表で `100378`＝「現物買・売注文抑止エラー＝市場に 1(東証) を指定して現物売買した場合に発生」と確認。`Exchange:1` 固定が全滅の原因で、ザラ場でも失敗した「未解決の謎」もこれで一貫説明可能（Exchange仮説は方向は当たりだったが原因は時間帯ではなく仕様廃止）。→ Phase 48 で `Exchange:9` に修正。
+
 #### 5/20 実況（検証材料は得られず）
 - 09:31予定の `diag-market-test.sh` は **WSL VMが昨夜23:56〜本日14:42までダウン** していたため未実行（`backend/logs/diag_market_test.log` 0バイトのまま）
 - 14:42 WSL復活 → 14:43 backend自動起動 → 14:44キャッチアップは kabu未ログインで401（全銘柄スキップ）
@@ -134,6 +136,7 @@
 - 仮想ポートフォリオ（参考、別系統）: 8銘柄保有・評価損益 +¥38,599（+5.49%）
 
 ### 直近の主要改善履歴
+- Phase 48（5/29）: **Code=100378 発注拒否の真因特定＆修正**。5/15以来未解決だった「全件発注拒否」の原因を特定。kabu公式エラー表で `100378`＝「現物買・売注文抑止エラー＝市場に 1(東証) を指定して現物売買した場合に発生」と判明。2026-03-02 の最良執行方針対応（kabucom/kabusapi Issue #1072）で **現物・信用「新規」発注の市場コード 1(東証) は廃止**され、`9(SOR)` または `27(東証＋)` が必須に。コードは `Exchange:1` 固定だったため全滅（時間外もザラ場も失敗した「謎」もこれで説明可能＝原因は時間帯ではなく仕様廃止）。修正: `brokerage_service.py` に `NEW_ORDER_EXCHANGE=9`（SOR・手数料無料/推奨）を導入し `send_order` の Exchange を 9 に。`scripts/diag-market-test.sh` も Exchange 1→9。バックエンド再起動で反映済（health/kabu接続OK）。検証: crontab を 5/29 09:05 に修正（旧 5/20 設定が「未発火」の正体）し diag を寄り後に自動実行。注意: 信用建玉の**返済**は従来どおり 1(東証) 必須だが返済（CashMargin=3）は未実装。出典: kabucom/kabusapi error.html・Issue #1072。
 - Phase 47（5/27）: **信用取引コード基盤の opt-in 実装**。月10万円ロードマップの初手。`brokerage_service.send_order/create_order` に `trading_mode` 引数追加（cash/margin_system/margin_general）。`auto_trade_service` の DEFAULT_CONFIG・get_config・update_config・残高取得・create_order 呼び出しで tradingMode 連携。`AutoTradeConfigResponse/UpdateRequest` に `tradingMode` 追加（デフォルト cash）。**デフォルトは現物のまま、有効化は `PUT /api/auto-trade/config '{"tradingMode":"margin_system"}'` で明示切替**。信用時は `marginBalance` を effective_budget に流す。残課題: Position Sizing/Risk Service の信用対応、フロントエンド設定 UI、信用残高表示。
 - Phase 46（5/27）: **minSignalStrength 2→1＋phase25 マイグレーション巻き戻し撤回**。5/27 ザラ場検証で kabu STATION 接続は終日 OK にもかかわらず約定 0 件。strength=2 buy 3 銘柄（4063・9433・9766）が残高 ¥85,187 では 1 株も買えず、Phase 45 で追加した低単価ユニバースは全て strength=1 で閾値外という構造を確認。`backend/src/main.py:386-389` の Phase 25 マイグレーションが毎回 1→2 に上書きしていたため当該行を削除。SCOPE_PROGRESS.md 現行設定表 (L47) と実起動値の食い違いを解消。
 - Phase 45（5/26）: **auto-trade ユニバース低単価拡張**。残高¥85,187 で1単元購入可能（株価≤¥851）な銘柄を yfinance で価格確認の上9件追加（8410 セブン銀行 / 7211 三菱自 / 6753 シャープ / 3861 王子HD / 2127 日本M&A / 5563 新日本電工 / 9831 ヤマダHD / 2353 日本駐車場開発 / 2317 システナ）。`POST /api/stocks` で銘柄登録→`PUT /api/auto-trade/stocks/{code}` で enabled=true。ユニバース 50→59 銘柄、全 enabled。強度2 buy が予算内銘柄で発火するかは月曜以降の観察待ち。
