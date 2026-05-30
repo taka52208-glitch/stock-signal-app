@@ -99,6 +99,11 @@ class KabuStationClient:
         resp = await self._request_with_retry('get', '/positions')
         return resp.json()
 
+    async def get_orders(self, product: int = 0) -> list[dict]:
+        """注文約定照会。product 0=すべて, 1=現物, 2=信用"""
+        resp = await self._request_with_retry('get', '/orders', params={'product': product})
+        return resp.json()
+
     async def send_order(self, code: str, side: str, quantity: int,
                          order_type: str, price: float | None = None,
                          trading_mode: str = 'cash') -> dict:
@@ -456,3 +461,71 @@ class BrokerageService:
             if pos['quantity'] > 0:
                 synced += 1
         return {'message': f'{synced}銘柄のポジション情報を取得しました'}
+
+    @staticmethod
+    def _interpret_order_state(bo: dict) -> tuple[str | None, float | None]:
+        """kabu の注文オブジェクトから (新ステータス, 約定平均単価) を判定。
+        変化が無い/判断できない場合は (None, None) を返す。
+        kabu API: State 1待機 2処理中 3処理済 4訂正取消中 5終了 /
+        Details[].RecType 8=約定成立"""
+        order_qty = float(bo.get('OrderQty') or 0)
+        cum_qty = float(bo.get('CumQty') or 0)
+        state = bo.get('State')
+
+        # 約定平均単価を執行明細(RecType=8 成立)から算出
+        exec_qty = 0.0
+        exec_amount = 0.0
+        for d in bo.get('Details') or []:
+            if d.get('RecType') == 8:  # 成立
+                q = float(d.get('Qty') or 0)
+                p = float(d.get('Price') or 0)
+                exec_qty += q
+                exec_amount += q * p
+        fill_price = (exec_amount / exec_qty) if exec_qty > 0 else None
+
+        # 全約定 → filled
+        if order_qty > 0 and cum_qty >= order_qty:
+            return 'filled', fill_price
+        # 終了かつ未約定 → cancelled（取消/失効/期限切れ）
+        if state == 5 and cum_qty == 0:
+            return 'cancelled', None
+        # 終了かつ部分約定 → filled 扱い（約定分のみ）
+        if state == 5 and cum_qty > 0:
+            return 'filled', fill_price
+        # それ以外（処理中など）はまだ確定しないので据え置き
+        return None, None
+
+    async def sync_orders(self) -> dict:
+        """kabu STATION の注文約定状態を取得し brokerage_orders を更新する。
+        submitted のまま止まっている注文を filled / cancelled へ反映し、
+        約定単価が判明すれば price も実約定値に更新する（収支集計の精度向上）。"""
+        pending = self.db.query(BrokerageOrder).filter(
+            BrokerageOrder.status == 'submitted',
+            BrokerageOrder.brokerage_order_id.isnot(None),
+        ).all()
+        if not pending:
+            return {'message': '同期対象の注文はありません', 'updated': 0}
+
+        client = self._get_client()
+        await client.connect()
+        broker_orders = await client.get_orders()
+        by_id = {str(o.get('ID')): o for o in broker_orders}
+
+        updated = 0
+        for order in pending:
+            bo = by_id.get(str(order.brokerage_order_id))
+            if not bo:
+                continue
+            new_status, fill_price = self._interpret_order_state(bo)
+            if new_status and new_status != order.status:
+                order.status = new_status
+                if new_status == 'filled' and fill_price:
+                    order.price = fill_price
+                updated += 1
+                logger.info(
+                    f"[brokerage] sync: {order.code} order#{order.id} "
+                    f"submitted→{new_status} (price={order.price})"
+                )
+        if updated:
+            self.db.commit()
+        return {'message': f'{updated}件の注文状態を更新しました', 'updated': updated}

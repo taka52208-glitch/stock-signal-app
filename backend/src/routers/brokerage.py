@@ -98,3 +98,13 @@ async def sync_positions(db: Session = Depends(get_db)):
         return await service.sync_positions()
     except Exception as e:
         raise HTTPException(status_code=502, detail=f'同期エラー: {str(e)}')
+
+
+@router.post('/sync-orders', response_model=MessageResponse)
+async def sync_orders(db: Session = Depends(get_db)):
+    """注文約定状態を同期（submitted→filled/cancelled）"""
+    service = BrokerageService(db)
+    try:
+        return await service.sync_orders()
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f'同期エラー: {str(e)}')

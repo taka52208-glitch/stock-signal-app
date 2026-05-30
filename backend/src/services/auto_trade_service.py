@@ -490,6 +490,14 @@ class AutoTradeService:
                     )
                     return
                 logger.info("[auto-trade] kabu STATION接続確認OK")
+                # 既存の submitted 注文の約定状態を同期（submitted→filled/cancelled）
+                # 収支集計を正確に保つため。失敗しても発注処理は続行する。
+                try:
+                    sync_result = asyncio.run(brokerage_service.sync_orders())
+                    if sync_result.get('updated'):
+                        logger.info(f"[auto-trade] 注文状態を同期: {sync_result['message']}")
+                except Exception as e:
+                    logger.warning(f"[auto-trade] 注文状態の同期に失敗（続行）: {e}")
             except Exception as e:
                 logger.error(f"[auto-trade] kabu STATION接続エラー: {e}. 全銘柄スキップ")
                 self._add_log(
