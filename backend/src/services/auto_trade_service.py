@@ -592,6 +592,10 @@ class AutoTradeService:
                         # --- ATR動的閾値 + 3段階利確 + トレーリングストップ ---
                         atr_take_profit = entry_price + 4 * sig_atr
                         atr_stop_loss = entry_price - 2 * sig_atr
+                        # 損切りは設定値(stopLossPercent)を上限に締める。
+                        # ATRが広い銘柄でも最大損失を設定%（例 -5%）以内に抑える。
+                        fixed_stop = entry_price * (1 + stop_loss_pct / 100)
+                        atr_stop_loss = max(atr_stop_loss, fixed_stop)
                         atr_gain = current_price - entry_price
                         # 3段階利確閾値
                         atr_stage1 = 1.5 * sig_atr  # 第1段階: 33%利確
