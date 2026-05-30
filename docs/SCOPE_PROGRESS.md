@@ -1396,3 +1396,98 @@ curl -X PUT http://localhost:8734/api/auto-trade/config \
 - 信用余力残高表示の UI 対応（marginBalance の表示）
 - 信用取引時の Position Sizing と Risk Service の見直し（現コードは現金残高ベースの上限で動いており、信用余力で発注すると `maxPositionPercent` などの絶対額判定がずれる）
 - 月10万円目標の Phase 48（TP/SL 短期化）と Phase 49（maxOpenPositions 段階拡大）の設計
+
+---
+
+## Phase 48: Code=100378 真因特定 — 市場コード1(東証)廃止に伴い Exchange を 9(SOR) へ（2026-05-29）
+
+### 背景
+5/15 以来 auto-trade の発注が全件 `Code=100378` で失敗していた真因を特定。2026-03-02 の最良執行方針対応（kabucom/kabusapi Issue #1072）で、現物・信用「新規」発注の市場コード 1(東証) が廃止され、9(SOR)/27(東証＋) が必須になっていた。コードは `Exchange:1` 固定だったため全滅（時間外もザラ場も失敗した「謎」もこれで一貫説明可能）。
+
+### 対処
+- `brokerage_service.py`: `NEW_ORDER_EXCHANGE=9`（SOR・推奨/手数料無料）を導入し、`send_order` の Exchange を 9 に変更
+- 注意: 信用建玉の「返済」は従来どおり 1(東証) 必須だが、返済(CashMargin=3)は未実装
+
+### 変更ファイル
+- `backend/src/services/brokerage_service.py`
+
+### 出典
+- kabu STATION API error.html / kabucom Issue #1072
+
+---
+
+## Phase 49: 注文約定状態の同期 — submitted→filled/cancelled で収支を正確化（2026-05-30）
+
+### 背景
+実資金の収支を確認したところ、ブローカー注文 95 件中 94 件が `failed`（Phase 48 で修正済の Code=100378 起因）、唯一受理された 6753（シャープ）100株 ¥621.80 の注文も `submitted` 止まりだった。原因は **約定後に注文状態をポーリングして DB を更新する処理が存在しなかった**こと。発注受理時点で `submitted` のまま固定され、`filled`/`cancelled` に遷移しないため、実現収支が正しく集計できない状態だった。
+
+### 適用した実装
+1. `KabuStationClient.get_orders(product=0)` を追加（kabu `GET /orders` 注文約定照会）
+2. `BrokerageService._interpret_order_state()` — `OrderQty`/`CumQty`/`State` と約定明細（`Details[].RecType==8`）から `filled`/`cancelled` を判定し、**実約定平均単価**も算出
+3. `BrokerageService.sync_orders()` — `submitted` かつ `brokerage_order_id` のある注文を照合し状態を更新、`filled` 時は約定単価を `price` に反映
+4. `auto_trade_service.py` — 売買サイクルの kabu 接続確認直後に自動同期（失敗しても発注処理は続行）
+5. `routers/brokerage.py` — 手動トリガー用 `POST /api/brokerage/sync-orders` を追加
+6. `.gitignore` に `backend/.venv/` を追加（仮想環境の誤コミット防止）
+
+### 判定ロジック（検証済み）
+| ケース | 結果 |
+|---|---|
+| 全約定（CumQty≥OrderQty） | `filled`（約定単価を記録） |
+| 処理中・未約定 | 据え置き（`submitted` 維持） |
+| 終了(State=5)・未約定 | `cancelled` |
+| 部分約定で終了 | `filled`（約定分の単価） |
+| 約定だが明細なし | `filled`（既存 price 維持） |
+
+### 変更ファイル
+- `backend/src/services/brokerage_service.py`
+- `backend/src/services/auto_trade_service.py`
+- `backend/src/routers/brokerage.py`
+- `.gitignore`
+
+---
+
+## 設定変更: maxOpenPositions 1→3（2026-05-30, DB risk_rules）
+
+### 背景
+実残高が約 ¥10万のところ、`maxOpenPositions=1` だと「予算全額を1銘柄に投入」する設計のため、6753 を ¥62,180（口座の約62%）一括購入していた。日本株は 100株単位のため ¥600 株は最小でも ¥6万 ＝ 1銘柄で口座の過半を占有してしまう構造。
+
+### 対処
+- `risk_rules.maxOpenPositions` を **1→3** に変更（DB 直接更新）
+- 予算/枠 = `min(investmentBudget, 残高) ÷ 3` ≈ ¥3.3万となり、`int(budget/price)//100` により高単価銘柄は自動的に「数量0」で弾かれ、低単価銘柄（NTT/SB/日本駐車場/セブン銀など ≤¥330）へ誘導される
+- スキップは `remaining_trades` を消費しない（実発注時のみデクリメント）ことを確認済み
+
+### 補足（ユニバースの現実）
+有効59銘柄のうち、100株の代金が >¥10万＝¥10万口座では買えない銘柄が43件。買えるのは15件、うち ≤¥2.5万 は3件（NTT/SB/日本駐車場）。**¥10万は100株単位戦略には小さく、分散には低位株中心が前提**。
+
+---
+
+## Phase 50: 損切りを設定値(stopLossPercent)で上限クランプ（2026-05-30）
+
+### 背景
+保有銘柄の手仕舞いは ATR がある銘柄では固定%（-5%）を無視し、ATR動的損切 `entry - 2*ATR` で発動する。6753（ATR=26.06）では実損切ラインが ¥569.7（**-8.4%, 最大損失 ≈ -¥5,212**）となり、利用者が設定画面で意図した -5%（≈ -¥3,109）より大幅に深い損失になっていた。
+
+### 対処
+- `auto_trade_service.py` の ATR分岐で `atr_stop_loss = max(entry - 2*ATR, entry*(1+stopLossPercent/100))` とクランプ
+- ATR が設定%より広い銘柄でも、**最大損失を設定%（-5%）以内に固定**
+- 6753: 損切ライン ¥569.7→¥590.7、最大損失 -¥5,212 → **-¥3,109** に抑制
+- 利確側（ATR動的 +4*ATR 等）は変更せず（上振れは許容）
+
+### トレードオフ
+- ATR損切（-8.4%）は「日中4%動く銘柄をノイズで振り落とされない」設計だが、外したときの傷が深い。利用者の希望（最大損失を ¥3,000 に固定）を優先しクランプを採用。
+- 既知の残課題: ①ブレークイーブンストップが条件並び順により死にコード（安全性影響なし）、②損切は終値判定→翌サイクル成行のため窓（ギャップ）リスクは残る、③日次上限 `break` が保有手仕舞いより先に発火し得る（保有1・枠3の現状では実害ほぼ無し）
+
+### 変更ファイル
+- `backend/src/services/auto_trade_service.py`
+
+### 反映
+- 2026-05-30 22:17 にバックエンド（uvicorn, port 8734）を再起動し新コードを反映済み。プロセスは init 直下・独立セッションで常駐。
+
+---
+
+## 実資金収支の現状サマリー（2026-05-30 時点）
+
+- **実現損益: ¥0**（売却の確定約定が一度も無い）
+- 実際にブローカーへ受理された注文は 6753（シャープ）100株 @¥621.80 ＝ ¥62,180 の 1 件のみ（`brokerage_order_id=20260529A02N72098838`、status=`submitted`）。他94件は Code=100378 で `failed`
+- 含み損益: 直近終値 ¥621.30 でほぼフラット（≈ -¥50）
+- バックテストの成功例ゼロ（唯一の1件は対象 USD_JPY でデータ無し `failed`）。**勝率・期待値を示す実績はまだ無く、「取り返せるか」は実約定が積み上がるまで判定不能**
+- 残課題: 6753 の実建玉照会（kabu STATION 建玉画面 or 証券口座Web）で実保有を最終確認すること。土曜は kabu STATION 停止のため未確認
