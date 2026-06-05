@@ -357,15 +357,21 @@ class BrokerageService:
         positions = await client.get_positions()
         result = []
         for pos in positions:
+            # 売り切った残骸建玉（LeavesQty=0）は保有銘柄ではないので除外。
+            # 残すと ProfitLoss=None を返しレスポンス検証(float必須)が落ちる。
+            qty = pos.get('LeavesQty') or 0
+            if qty == 0:
+                continue
             code = pos.get('Symbol', '').split('@')[0] if '@' in pos.get('Symbol', '') else pos.get('Symbol', '')
             stock = self.db.query(Stock).filter(Stock.code == code).first()
             result.append({
                 'code': code,
                 'name': stock.name if stock else pos.get('SymbolName', f'銘柄{code}'),
-                'quantity': pos.get('LeavesQty', 0),
-                'averagePrice': pos.get('AveragePrice', 0),
-                'currentPrice': pos.get('CurrentPrice', 0),
-                'profitLoss': pos.get('ProfitLoss', 0),
+                'quantity': qty,
+                # kabu が None を返すケースに備え 0 にフォールバック
+                'averagePrice': pos.get('AveragePrice') or 0,
+                'currentPrice': pos.get('CurrentPrice') or 0,
+                'profitLoss': pos.get('ProfitLoss') or 0,
             })
         return result
 
