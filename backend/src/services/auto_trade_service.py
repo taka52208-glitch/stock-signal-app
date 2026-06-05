@@ -597,6 +597,9 @@ class AutoTradeService:
                         fixed_stop = entry_price * (1 + stop_loss_pct / 100)
                         atr_stop_loss = max(atr_stop_loss, fixed_stop)
                         atr_gain = current_price - entry_price
+                        # 単元株数（買い側 line ~864 の (raw_qty // 100) * 100 と同じ前提）。
+                        # 部分売却数量を単元の倍数に丸めないと kabu API が Code 1002 で拒否する。
+                        unit_shares = 100
                         # 3段階利確閾値
                         atr_stage1 = 1.5 * sig_atr  # 第1段階: 33%利確
                         atr_stage2 = 2.5 * sig_atr  # 第2段階: 33%利確
@@ -611,8 +614,8 @@ class AutoTradeService:
                                 f'含み益 {gain_pct:.1f}%）'
                             )
                         elif atr_gain >= atr_stage2:
-                            # 第2段階: 含み益 >= 2.5*ATR → 33%利確（最低1株）
-                            partial_qty = max(hold_qty // 3, 1)
+                            # 第2段階: 含み益 >= 2.5*ATR → 33%利確（単元単位に丸め、最低1単元）
+                            partial_qty = max((hold_qty // 3) // unit_shares * unit_shares, unit_shares)
                             if partial_qty < hold_qty:
                                 sell_reason = (
                                     f'段階的利確・第2段階（含み益 {gain_pct:.1f}%, '
@@ -627,8 +630,8 @@ class AutoTradeService:
                                     f'全{hold_qty}株売却）'
                                 )
                         elif atr_gain >= atr_stage1:
-                            # 第1段階: 含み益 >= 1.5*ATR → 33%利確（最低1株）
-                            partial_qty = max(hold_qty // 3, 1)
+                            # 第1段階: 含み益 >= 1.5*ATR → 33%利確（単元単位に丸め、最低1単元）
+                            partial_qty = max((hold_qty // 3) // unit_shares * unit_shares, unit_shares)
                             if partial_qty < hold_qty:
                                 sell_reason = (
                                     f'段階的利確・第1段階（含み益 {gain_pct:.1f}%, '
