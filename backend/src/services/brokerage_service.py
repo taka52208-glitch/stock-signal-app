@@ -368,8 +368,9 @@ class BrokerageService:
                 'code': code,
                 'name': stock.name if stock else pos.get('SymbolName', f'銘柄{code}'),
                 'quantity': qty,
-                # kabu が None を返すケースに備え 0 にフォールバック
-                'averagePrice': pos.get('AveragePrice') or 0,
+                # kabu /positions の取得単価は 'Price' フィールド（'AveragePrice' は存在しない）。
+                # None を返すケースに備え 0 にフォールバック。
+                'averagePrice': pos.get('Price') or 0,
                 'currentPrice': pos.get('CurrentPrice') or 0,
                 'profitLoss': pos.get('ProfitLoss') or 0,
             })
